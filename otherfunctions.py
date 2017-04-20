@@ -14,7 +14,6 @@ def regress(dataframe):
     '''
     Perform regression of column refdata on column testdata
     '''
-    dataframe.dropna()
     #Berechnet Korrelation zwischen Testdaten und Referenzdaten
     R,pval=stats.pearsonr(dataframe.refdata,dataframe.testdata)
     out=dataframe.refdata
@@ -114,3 +113,5 @@ def merge_ts(dataframe):
         #Else perform interpolation from linear regression
         merged_ts=fill_holes_lress(max_series,other_series_merged)
         return merged_ts
+
+            

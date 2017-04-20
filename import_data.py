@@ -20,7 +20,9 @@ from pygeogrids.netcdf import load_grid
 import pytesmo.io.ismn.interface as ismn
 import matplotlib.pyplot as plt
 import pickle
-from HomogeneityTesting.otherfunctions import merge_ts
+from HomogeneityTesting.otherfunctions import merge_ts,regress
+
+
 def read_warp_ssm(ssm,ssf,gpi):
     
     import pytesmo.timedate.julian as julian
@@ -40,28 +42,31 @@ def read_warp_ssm(ssm,ssf,gpi):
     return ts.groupby(level=0).last()
 
 class ISMNdata_USA(object):
-    def __init__(self,path_ismn,breaktime,timeframe,max_depth=0.1):
+    def __init__(self,timeframe,breaktime,max_depth=0.1):
         #Create a list of gpis nearest to the stations of the dataset
         #If a gpi is nearest for multiple stations,
             #create a list of stations for these gpis that have to be merged 
             #when importing data for the gpi
-        defaultfile=r"H:\workspace\HomogeneityTesting\output\ismn_usa_gpi_netsta.pkl"
-        self.breaktime=datetime.strptime(breaktime, '%Y-%m-%d')
-        self.timeframe=[datetime.strptime(timeframe[0], '%Y-%m-%d'),
-                        datetime.strptime(timeframe[1], '%Y-%m-%d')]
+        path_ismn_USA=os.path.join('U:\\','datasets','ISMN','insituUSA','Data_seperate_files_19500101_20170321_2365493_xzeO_20170321')
+        
+        self.breaktime=breaktime
+        self.timeframe=timeframe
         self.max_depth=max_depth
-        self.path_ismn=path_ismn
-        self.ISMN_reader = ismn.ISMN_Interface(path_ismn)
+        self.path_ismn=path_ismn_USA
+        self.ISMN_reader = ismn.ISMN_Interface(self.path_ismn)
         networks = self.ISMN_reader.list_networks()
         
+        defaultfile=r'H:\workspace\HomogeneityTesting\output\ismn_files\USA_gpinetsta_%s_%s_%s.pkl'%(timeframe[0].strftime('%Y-%m-%d'),
+                                                                                                     breaktime.strftime('%Y-%m-%d'),
+                                                                                                     timeframe[1].strftime('%Y-%m-%d'))
+                                                                                                     
         land_grid=load_grid(r"R:\Datapool_processed\GLDAS\GLDAS_NOAH025SUBP_3H\ancillary\GLDAS_025_grid.nc")
-        
-        
         
         if os.path.isfile(defaultfile):
             with open(defaultfile, 'rb') as f:
                 self.gpis_with_netsta=pickle.load(f)
         else:
+            print('File for stations near GPI not found. Creating...')
             self.gpis_with_netsta={}
             #IDS of measurements of valid variable and depth
                                                  
@@ -70,7 +75,7 @@ class ISMNdata_USA(object):
                 stations = self.ISMN_reader.list_stations(network = network)
                 for station in stations:
                     station_obj = self.ISMN_reader.get_station(stationname=station,network=network)
-                    gpi,dist=land_grid.find_nearest_gpi(station_obj.latitude,
+                    gpi,dist=land_grid.find_nearest_gpi(station_obj.longitude,
                                                         station_obj.latitude)
                     
                     variables=station_obj.get_variables()
@@ -80,7 +85,7 @@ class ISMNdata_USA(object):
                         depths_to=np.unique(depths_to)
                         
                         #Check if any sensor measured in the correct depth
-                        if any(depths_to <= self.max_depth):
+                        if any(np.around(depths_to,decimals=2) <= self.max_depth):
                             station_timeframe=station_obj.get_min_max_obs_timestamp()
                             #Check if station measured during the timeframe
                             
@@ -98,45 +103,45 @@ class ISMNdata_USA(object):
                     
     def read_all_for_stations_near_gpi(self,gpi):
         #Only bother with reading the station near the gpi if the gpi is in the objects list 
-        if gpi in self.gpis_with_netsta.keys():
-            DF_Stations=pd.DataFrame()
-            stations_dict={}
-            for i,(network,station) in enumerate(self.gpis_with_netsta[gpi]):
-                stations_dict.update({station:{}})
-                station_obj=self.ISMN_reader.get_station(stationname=station,
-                                                         network=network)
-                
-                depths_from,depths_to = station_obj.get_depths('soil moisture')
-                depths_from=np.unique(depths_from)
-                depths_to=np.unique(depths_to)
-                #Exclude depths below max depth
-                depths_to=depths_to[np.where(depths_to<self.max_depth)]
-                depths_from=depths_from[np.where(depths_to<self.max_depth)]
-                
-                #Iterate over all valid depths for all sensors in this depths
-                for j,(depth_from,depth_to) in enumerate(zip(depths_from,depths_to)):
-                    sensors=station_obj.get_sensors('soil moisture',depth_from,depth_to)                                     
-                    stations_dict[station].update({(round(depth_from,3),round(depth_to,3)):sensors.tolist()})
-                    for k,sensor in enumerate(sensors):
-                        try:                                  
-                            data = station_obj.read_variable('soil moisture',
-                                                             depth_from=depths_from[0],
-                                                             depth_to=depths_to[0],
-                                                             sensor=sensor).data
-                            DF_Stations['%s_%s_%s_%s'%(station,
-                                                       str(round(depth_from,3)),
-                                                       str(round(depth_to,3)),sensor)]=data[data['soil moisture_flag']=='G']['soil moisture']
-                        except:
-                            continue
 
-            return stations_dict,DF_Stations[self.timeframe[0]:self.timeframe[1]]
-        else:
-            raise Exception, 'No insitu stations for gpi in valid range'
-                
-    def merge_station_series(self,gpi):
+        DF_Stations=pd.DataFrame()
+        stations_dict={}
+        for i,(network,station) in enumerate(self.gpis_with_netsta[gpi]):
+            stations_dict.update({station:{}})
+            station_obj=self.ISMN_reader.get_station(stationname=station,
+                                                     network=network)
+            
+            depths_from,depths_to = station_obj.get_depths('soil moisture')
+            depths_from=np.unique(depths_from)
+            depths_to=np.unique(depths_to)
+            #Exclude depths below max depth
+            depths_to=depths_to[np.where(depths_to<self.max_depth)]
+            depths_from=depths_from[np.where(depths_to<self.max_depth)]
+            
+            #Iterate over all valid depths for all sensors in this depths
+            for j,(depth_from,depth_to) in enumerate(zip(depths_from,depths_to)):
+                sensors=station_obj.get_sensors('soil moisture',depth_from,depth_to)                                     
+                stations_dict[station].update({(round(depth_from,3),round(depth_to,3)):sensors.tolist()})
+                for k,sensor in enumerate(sensors):
+                    try:                                  
+                        data = station_obj.read_variable('soil moisture',
+                                                         depth_from=depths_from[0],
+                                                         depth_to=depths_to[0],
+                                                         sensor=sensor).data
+                        DF_Stations['%s_%s_%s_%s'%(station,
+                                                   str(round(depth_from,3)),
+                                                   str(round(depth_to,3)),sensor)]=data[data['soil moisture_flag']=='G']['soil moisture']
+                    except:
+                        continue
+
+        return stations_dict,DF_Stations
+
+         
+         
+    def merge_stations_around_gpi(self,gpi,df_cci):
         stations_dict,DF_Stations=self.read_all_for_stations_near_gpi(gpi)
         #Include only meansurements +-6H around 0:00H
-        #TODO: can measurements from different sensorsbut same depth be averaged?
+        #TODO: can measurements from different sensors but same depth be averaged?
         #TODO: can measurements from different depths be averaged?
         DF_Station=pd.DataFrame()
         for s,station in enumerate(stations_dict.keys()):
@@ -148,65 +153,47 @@ class ISMNdata_USA(object):
                     ts_sensor=DF_Stations['%s_%s_%s_%s'%(station,depth[0],depth[1],sensor)]
                     DF_Sensor['Sensor%i'%i]=ts_sensor
                 if DF_Sensor.empty:continue
-                DF_Sensor=DF_Sensor.between_time('18:00','06:00',include_start=True,include_end=True)
+
+                #If a sensore measures daily, just use the daily values as represtative                
+                if np.unique(DF_Sensor.index.date).size == DF_Sensor.index.date.size:
+                    DF_Sensor=DF_Sensor.resample('24H',base=18,label='right').mean()
+                else:   
+                    DF_Sensor=DF_Sensor.between_time('18:00','06:00',include_start=True,include_end=True)
                 DF_Sensor=DF_Sensor.resample('12H',base=18,label='right').mean()                  
                 DF_Sensor=DF_Sensor.at_time('06:00')
                 
                 DF_Depth['Depth%i'%d]=merge_ts(DF_Sensor)
             if DF_Depth.empty:continue
-            DF_Station['Station%i'%s]=merge_ts(DF_Depth)                
-                #Fill Nan Values in max_series with values from lin regression 
+            DF_Station['Station%i'%s]=merge_ts(DF_Depth)
+        if DF_Station.empty:
+            raise Exception, 'No valid insitu data around gpi'
+        DF_Station=DF_Station.shift(-6,freq='H')
         
         
-        
-        #iterate over stations
-            #iterate over depths
-                #Sensor merge:
-                #Find ts with most values: This is reference to enhance
-        
-        
-            #Depth merge:
-        
-        
-        #Station merge:
+        for station in DF_Station.columns.values:
+            DF_merged=pd.concat([df_cci,DF_Station[station]],axis=1)
+            DF_merged=DF_merged.dropna()
+            DF_merged=DF_merged.rename(columns={station:'refdata',DF_merged.columns.values[0]:'testdata'})
+            #bivariate linear correlation --> b,c to remove add/mult biases            
+            DF_merged[station],R,pval,ress=regress(DF_merged)
+            DF_Station[station+'_bias_corr']=DF_merged[station]
         
         
+        DF_Station=DF_Station[DF_Station.columns[DF_Station.columns.to_series().str.contains('_bias_corr')]]
+        DF_Station['testdata']=df_cci        
+        weights=DF_Station.corr()['testdata']**2
         
-        #Choose longest series as reference series to enhance:
         
-        #Merge the measurements of sensors for same station and same depth
-        #Merge measurements of    
-        DF_Station.plot()
-        plt.show()
+        del weights['testdata']
+        del DF_Station['testdata']
+        #Normalization: Pos lin correlation betw CCI and each station-->weighting coeff
+        sumweights=weights.sum()
+        DF_Station['insitu']=(DF_Station*weights).sum(axis=1,skipna=False)/sumweights
+        DF_Station['testdata']=df_cci  
         
-        DF_Stations['merged']=DF_Stations.mean(axis=1)
-        DF_Stations['in_timeframe']=DF_Stations['merged'].between_time('18:00','06:00',include_start=True,include_end=True)
-        DF_Stations['timeframe_mean']=DF_Stations['in_timeframe'].resample('12H',base=18,label='right').mean()                
+        DF_Station=DF_Station.resample('M').mean()
         
-        #TODO: Mean is influenced by not flagged outliers...
-        DF_Time['P:%i'%gpi]=DF_Stations.iloc[DF_Stations.index.hour==6]['timeframe_mean']                          
-        #Create one value from +-6h around 0H
-        '''
-        for point in DF_Time.columns.values
-            corr,pval=stats.pearsonsr(DF_Time[point],test_ts)
-            if corr >=0.8 and pval<0.01:
-                
-        DF_Time.index=DF_Time.index.date
-        
-        return DF_Time
-        else:
-            raise Exception, 'No ISMN station for GPI cell %i'%gpi
-        '''
-                    
-                    
-                                          
-
-                    
-path=os.path.join('U:\\','datasets','ISMN','insituUSA','Data_seperate_files_19500101_20170321_2365493_xzeO_20170321')
-ismn_obj=ISMNdata_USA(path,breaktime='2007-01-01',timeframe=['2002-07-01','2011-10-01'])
-DF_Time=ismn_obj.merge_station_series(722304)  
-  
-#%%
+        return DF_Station['insitu'][self.timeframe[0]:self.timeframe[1]]          
 
      
 class QDEGdata_M(object):
@@ -599,7 +586,20 @@ class QDEGdata_3H(object):
                     data_group=pd.concat([data_group,ts_gldas_merged.rename('gldas-merged')],axis=1)
         
             return data_group[startdate:enddate]
-#Testing
+#Testing ISMN
+'''
+timeframe=['2002-07-01','2011-10-01']
+path=os.path.join('U:\\','datasets','ISMN','insituUSA','Data_seperate_files_19500101_20170321_2365493_xzeO_20170321')
+ismn_obj=ISMNdata_USA(path,breaktime='2007-01-01',timeframe=timeframe)
+data=QDEGdata_D(products=['cci_22'])
+ts_cci=data.read_gpi(737687,timeframe[0],timeframe[1])
+try:
+    DF_Time=ismn_obj.merge_stations_around_gpi(737687,ts_cci/100)  
+except:
+    print('GPI failed for ISMN data')
+'''
+
+
 '''
 ttime=['2002-07-01','2007-01-01','2015-10-01']
 

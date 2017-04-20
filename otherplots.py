@@ -5,6 +5,7 @@ Created on Wed Mar 22 17:06:28 2017
 @author: wpreimes
 """
 import numpy as np
+import math
 import os,glob
 from datetime import datetime
 import pandas as pd
@@ -109,8 +110,50 @@ def spatial_plot_quarter_grid(data, tags, \
             plt.savefig(path + '\\'+ title + '.png', dpi = f.dpi)
             plt.close()
             
+ 
+def compare_RTM_RTG(workdir,model_prod):
+    
+    times={'ISMN-merge':{'starttimes':[],'endtimes':[],'breaktimes':[]},
+                model_prod:{'starttimes':[],'endtimes':[],'breaktimes':[]}}
+    files={'ISMN-merge':[],model_prod:[]}            
+    for ref_data in ['ISMN-merge',model_prod]:
+        fileslist=glob.glob(os.path.join(workdir,"DF_Points_%s*.csv" %ref_data))
+        files[ref_data]=fileslist
+        for filename in fileslist:
+            filename=filename.replace(workdir,'')
+            filename=filename.replace('.','_')
+            splitname=filename.split('_')
+            times[ref_data]['starttimes'].append(splitname[3])
+            times[ref_data]['endtimes'].append(splitname[5])
+            times[ref_data]['breaktimes'].append(splitname[4])
+    ''' 
+    if (times['ISMN_merge']['starttimes']==times[model_prod]['starttimes']) and \
+        (times['ISMN_merge']['endtimes']==times[model_prod]['endtimes']) and \
+        (times['ISMN_merge']['breaktimes']==times[model_prod]['breaktimes']):
+    '''
+
+    rows=int(math.ceil(float(len(files['ISMN-merge']))/2.))
+    fig,axs=plt.subplots(rows,2,figsize=(15, 6), facecolor='w', edgecolor='k')
+    fig.subplots_adjust(hspace=1,wspace=1)
+    axs=axs.ravel()
+        
+    for i,(ismn_file, model_file) in enumerate(zip(files['ISMN-merge'],files[model_prod])):
+        if times['ISMN-merge']['breaktimes'][i]==times[model_prod]['breaktimes'][i]:
+            DF_Points_ismn=pd.read_csv(os.path.join(ismn_file),index_col=0)
+            DF_Points_model=pd.read_csv(os.path.join(model_file),index_col=0)
             
-            
+            if (DF_Points_ismn.index==DF_Points_model.index).all():
+                DF_Points_merged=DF_Points_model[['lat','lon','h_all']].rename(columns={'h_all':model_prod})
+                DF_Points_merged['ISMN-merge']=DF_Points_ismn['h_all']               
+                DF_Points_merged=DF_Points_merged.dropna(how='any')
+                DF_Points_merged['diff']=DF_Points_merged[model_prod]-DF_Points_merged['ISMN-merge']
+                
+                DF_Points_merged.hist(column='diff',bins=[-3,-2,-1,0,1,2,3],ax=axs[i])
+                #axs[i].set_xlim((-3,3))
+                axs[i].set_title(str(times[model_prod]['breaktimes'][i]))
+                
+    fig.savefig(os.path.join(workdir,'RTM_vs_RTG'))
+
 
 def show_tested_gpis(workdir,ref_prod):
     
@@ -150,7 +193,7 @@ def show_tested_gpis(workdir,ref_prod):
             else: 
                 DF_Points.set_value(gpi,'TestGroups',3)
     
-        colors = ['green','pink','red','orange'] 
+        colors = ['green','pink','red','white'] 
         cmap=LinearSegmentedColormap.from_list('TestGroups',
                                                colors, 
                                                N=4)
@@ -213,7 +256,17 @@ def inhomo_plot_with_stats(workdir):
             hfk_gpis=DF_Points['h_all'].loc[DF_Points['h_all'].isin([2.,3.])].size
             hboth_gpis=DF_Points['h_all'].loc[DF_Points['h_all'].isin([3.])].size
             
-    
+            
+            
+            all_tested=(float(tested_gpis)/float(all_gpis))*100.
+            try:
+                wk_tested=(float(hwk_gpis)/float(tested_gpis))*100.         
+                fk_tested=(float(hfk_gpis)/float(tested_gpis))*100.
+                both_tested=(float(hboth_gpis)/float(tested_gpis))*100.
+            except:
+                wk_tested,fk_tested,both_tested=0,0,0
+
+                
             colors = [(1, 0, 0), (0, 1, 0), (0, 0, 1),(.5,.5,.5)] 
             cmap=LinearSegmentedColormap.from_list('HomogeneityGroups',
                                                    colors, 
@@ -224,10 +277,10 @@ def inhomo_plot_with_stats(workdir):
                                       title='HomogeneityTest_%s_(breaktime-%s)'%(ref_prod,breaktime.strftime("%Y-%m-%d")),
                                       cbrange=(1,4),
                                       cmap=cmap,
-                                      textbox='Pixel tested:%f\n'%((float(tested_gpis)/float(all_gpis))*100.) +\
-                                              'WK of tested:%f\n'%((float(hwk_gpis)/float(tested_gpis))*100.) +\
-                                              'FK of tested:%f\n'%((float(hfk_gpis)/float(tested_gpis))*100.) +\
-                                              'Both of tested:%f'%((float(hboth_gpis)/float(tested_gpis))*100.),
+                                      textbox='%% Pixel tested:%.2f\n'%all_tested+\
+                                              '%% WK of tested:%.2f\n'%wk_tested +\
+                                              '%% FK of tested:%.2f\n'%fk_tested +\
+                                              '%% Both of tested:%.2f'%both_tested,
                                       cblabel='1=WK,2=FK,3=both,4=None',
                                       #continent='NA',
                                       path=workdir)
@@ -326,6 +379,7 @@ def calc_longest_homogeneous_period(workdir,test_prod,ref_prod):
 #calc_longest_homogeneous_period(r'H:\workspace\HomogeneityTesting\output\v11','cci_22','merra2')
 #show_tested_gpis(r'H:\workspace\HomogeneityTesting\output\v11','merra2')
 #inhomo_plot_with_stats(r'H:\workspace\HomogeneityTesting\output\v12')
+#compare_RTM_RTG(r'H:\workspace\HomogeneityTesting\output\v25','merra2')
 '''
 show_tested_gpis(r'H:\workspace\HomogeneityTesting\output\plottest','merra2')
 '''

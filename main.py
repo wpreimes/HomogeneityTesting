@@ -27,17 +27,15 @@ from matplotlib.colors import LinearSegmentedColormap
 from datetime import datetime
 
 
-
-
 def start(test_prod,ref_prod,QDEG_gpi_csv,workpath):
     
     if test_prod in ['cci_22_from_file','cci_22']:
         
-        breaktimes=['2011-10-01','2002-07-01','1991-08-01',
+        breaktimes=['2002-07-01','2011-10-01','1991-08-01',
                     '2012-07-01','2007-01-01','1998-01-01']
                     
-        timeframes=[['2007-01-01','2012-07-01'],
-                    ['1998-01-01','2007-01-01'],
+        timeframes=[['1998-01-01','2007-01-01'],
+                    ['2007-01-01','2012-07-01'],
                     ['1987-07-01','1998-01-01'],
                     ['2011-10-01','2015-01-01'],
                     ['2002-07-01','2011-10-01'],
@@ -87,9 +85,14 @@ def start(test_prod,ref_prod,QDEG_gpi_csv,workpath):
             print 'Start testing'
                             
             for iteration,gpi in enumerate(test_obj.DF_Points.index.values):
-
-                #if gpi in test_obj.testdata_mask: continue
-                if iteration%100 == 0: print 'Processing QDEG Point %i (iteration %i of %i)' %(gpi,iteration,test_obj.DF_Points.index.values.size)
+                if iteration%1000 == 0: 
+                    print 'Processing QDEG Point %i (iteration %i of %i)' %(gpi,iteration,test_obj.DF_Points.index.values.size)
+                
+                if test_obj.ref_prod == 'ISMN-merge':               
+                    valid_insitu_gpis=test_obj.ismndata.gpis_with_netsta
+                    
+                    if gpi not in valid_insitu_gpis.keys():
+                        continue
                 
                 try:
                     #test_obj.save_as_mat(gpi=gpi)   
@@ -122,37 +125,44 @@ def start(test_prod,ref_prod,QDEG_gpi_csv,workpath):
                     test_obj.DF_Points.set_value(gpi,'h_all',3.0)
                 elif wk == 0 and fk==0:
                     test_obj.DF_Points.set_value(gpi,'h_all',4.0)
+
+            #Add Info to log file
+            test_obj.add_log_line('Finished testing for timeframe %s at %s' %(timeframe,datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            
             
             test_obj.DF_Points=test_obj.DF_Points[['cell','lat','lon','h_WK','h_FK','h_all','message']]
             test_obj.DF_Points.to_csv(os.path.join(test_obj.workpath,'DF_Points_%s_%s_%s_%s.csv' %(ref_prod,timeframe[0],breaktime,timeframe[1])),
                                       index=True, na_rep='nan') 
+                                      
+            test_obj.add_log_line('Saved results to: DF_Points_%s_%s_%s_%s.csv' %(ref_prod,timeframe[0],breaktime,timeframe[1]))
             
-            
-            #Plotting
-            show_tested_gpis(test_obj.workpath)
-            inhomo_plot_with_stats(test_obj.workpath)
-            calc_longest_homogeneous_period(test_obj.workpath,test_obj.test_prod,test_obj.ref_prod)
-            
-            
-            
-            '''
-            colors = [(1, 0, 0), (0, 1, 0), (0, 0, 1),(.5,.5,.5)] 
-            cmap=LinearSegmentedColormap.from_list('HomogeneityGroups',
-                                                   colors, 
-                                                   N=4)
-                                                   
-            spatial_plot_quarter_grid(test_obj.DF_Points,
-                                      tags=['h_all'],
-                                      title='HomogeneityTest_%s_(breaktime-%s)'%(ref_prod,test_obj.breaktime.strftime("%Y-%m-%d")),
-                                      cbrange=(1,4),
-                                      cmap=cmap,
-                                      cblabel='1=WK,2=FK,3=both,4=None',
-                                      #continent='NA',
-                                      path=test_obj.workpath)
-            '''
 
-#start('merra2',r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv")
-#Refproduct: gldas-merged,gldas-merged-from-file---um0h,merra2
+    #Plotting
+    show_tested_gpis(test_obj.workpath,test_obj.ref_prod)
+    inhomo_plot_with_stats(test_obj.workpath)
+    
+    test_obj.add_log_line('Created plots for Homogeneity Testing results and Tested GPIs')
+    
+    
+    test_obj.add_log_line('=====================================')
+    calc_longest_homogeneous_period(test_obj.workpath,test_obj.test_prod,test_obj.ref_prod)   
+    test_obj.add_log_line('Created Plot for Longest Homogeneous Period')  
+
+
+    #TODO: Create Scatterplot for comparing RTG and RTM
+
+
+
+#Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
+'''
+start('cci_31','ISMN-merge',
+      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
+      r'H:\workspace\HomogeneityTesting\output')  
+      
+start('cci_22','ISMN-merge',
+      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
+      r'H:\workspace\HomogeneityTesting\output')  
+
 '''
 start('cci_31','merra2',
       r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
@@ -161,12 +171,12 @@ start('cci_31','merra2',
 start('cci_22','merra2',
       r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
       r'H:\workspace\HomogeneityTesting\output')    
-'''
+
 start('cci_31','gldas-merged-from-file',
-      r"H:\workspace\HomogeneityTesting\csv\pointlist_United_quarter.csv",
+      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
       r'H:\workspace\HomogeneityTesting\output')    
       
 start('cci_22','gldas-merged-from-file',
-      r"H:\workspace\HomogeneityTesting\csv\pointlist_Australia_quarter.csv",
+      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
       r'H:\workspace\HomogeneityTesting\output')    
 '''
