@@ -69,7 +69,7 @@ class ISMNdata_USA(object):
             print('File for stations near GPI not found. Creating...')
             self.gpis_with_netsta={}
             #IDS of measurements of valid variable and depth
-                                                 
+                                  
             for i,network in enumerate(networks):
                 print(network,'%i of %i'%(i,len(networks)-1))
                 stations = self.ISMN_reader.list_stations(network = network)
@@ -241,6 +241,10 @@ class QDEGdata_M(object):
             dayproducts.append('cci_22')
         if 'cci_31' in products:
             dayproducts.append('cci_31')
+        if 'cci_31_active' in products:
+            dayproducts.append('cci_31_active')
+        if 'cci_31_passive' in products:
+            dayproducts.append('cci_31_passive')
             
         if dayproducts:
             self.daydata=QDEGdata_D(products=dayproducts)
@@ -254,7 +258,7 @@ class QDEGdata_M(object):
             data_group= pd.DataFrame()
         else:
             df_day=self.daydata.read_gpi(gpi,startdate,enddate)
-            for cci_prod in ['cci_22','cci_31']:
+            for cci_prod in ['cci_22','cci_31','cci_31_active','cci_31_passive']:
                 #For HomogeneityTesting make monthly merge only if there are 
                 #more than 10 measurements a month
                 if cci_prod in df_day.columns.values:
@@ -338,6 +342,7 @@ class QDEGdata_D(object):
                 path_cci_22=r'D:\USERS\wpreimes\datasets\CCI_22_D'
             else:
                 path_cci_22 = r"R:\Datapool_processed\ESA_CCI_SM\ESA_CCI_SM_v02.2\050_combinedProduct"
+                print('Found files for cci22 daily data on R')
             self.cci_22 = CCIDs(path_cci_22)
             
         if 'cci_31' in products:
@@ -345,14 +350,36 @@ class QDEGdata_D(object):
                 print('Found local files for cci31 daily data')
                 path_cci_31=r'D:\USERS\wpreimes\datasets\CCI_31_D'
             else:
+                print('Found files for cci31 daily data on R')
                 path_cci_31=r"R:\Datapool_processed\ESA_CCI_SM\ESA_CCI_SM_v03.1\050_combinedProduct"
             self.cci_31 = CCIDs(path_cci_31)
+            
+            
+        if 'cci_31_active' in products:
+            if os.path.isdir(r'D:\USERS\wpreimes\datasets\CCI_31_D\mergedActiveProd'):
+                print('Found local files for cci31_active daily data')
+                path_cci_31_act=r'D:\USERS\wpreimes\datasets\CCI_31_D\mergedActiveProd'
+            else:
+                print('Found files for cci31_active daily data on R')
+                path_cci_31_act=r"R:\Datapool_processed\ESA_CCI_SM\ESA_CCI_SM_v03.1\031_mergedActiveProd"
+            self.cci_31_act = CCIDs(path_cci_31_act)
+            
+        if 'cci_31_passive' in products:
+            if os.path.isdir(r'D:\USERS\wpreimes\datasets\CCI_31_D\mergedPassiveProd'):
+                print('Found local files for cci31_passive daily data')
+                path_cci_31_pass=r'D:\USERS\wpreimes\datasets\CCI_31_D\mergedPassiveProd'
+            else:
+                print('Found files for cci31_passive daily data on R')
+                path_cci_31_pass=r"R:\Datapool_processed\ESA_CCI_SM\ESA_CCI_SM_v03.1\031_mergedPassiveProd"
+            self.cci_31_pass = CCIDs(path_cci_31_pass)
+            
             
         if 'ascat' in products:
             if os.path.isdir(r'D:\USERS\wpreimes\datasets\ascata'):
                 print('Found local files for ascat daily data')
                 path_ascat=r'D:\USERS\wpreimes\datasets\ascata'
             else:
+                print('Found  files for ascat daily data on U')
                 path_ascat = r"U:\datasets\ascata"
             self.ascat=CCIDs(path_ascat)
             
@@ -453,6 +480,39 @@ class QDEGdata_D(object):
                 data_group['cci_31']= ts_cci
             else:
                 data_group=pd.concat([data_group,ts_cci.rename('cci_31')],axis=1)
+                
+        if 'cci_31_active' in self.products:
+            try:
+                ts_cci = self.cci_31_act.read_ts(gpi,mask_sm_nan=True)['sm'][startdate:enddate]
+            except:
+                ts_cci = pd.Series(index=pd.date_range(start=startdate,end=enddate))
+            if ts_cci.isnull().all():
+                print 'No cci data for gpi %0i' % gpi
+
+            ts_cci.index=ts_cci.index.to_datetime().date
+            ts_cci.index=ts_cci.index.to_datetime()
+
+            if data_group.empty:
+                data_group['cci_31_active']= ts_cci
+            else:
+                data_group=pd.concat([data_group,ts_cci.rename('cci_31_active')],axis=1)
+                
+        
+        if 'cci_31_passive' in self.products:
+            try:
+                ts_cci = self.cci_31_pass.read_ts(gpi,mask_sm_nan=True)['sm'][startdate:enddate]
+            except:
+                ts_cci = pd.Series(index=pd.date_range(start=startdate,end=enddate))
+            if ts_cci.isnull().all():
+                print 'No cci data for gpi %0i' % gpi
+
+            ts_cci.index=ts_cci.index.to_datetime().date
+            ts_cci.index=ts_cci.index.to_datetime()
+
+            if data_group.empty:
+                data_group['cci_31_passive']= ts_cci
+            else:
+                data_group=pd.concat([data_group,ts_cci.rename('cci_31_passive')],axis=1)
                     
                 
             
@@ -586,31 +646,25 @@ class QDEGdata_3H(object):
                     data_group=pd.concat([data_group,ts_gldas_merged.rename('gldas-merged')],axis=1)
         
             return data_group[startdate:enddate]
+
 #Testing ISMN
 '''
 timeframe=['2002-07-01','2011-10-01']
 path=os.path.join('U:\\','datasets','ISMN','insituUSA','Data_seperate_files_19500101_20170321_2365493_xzeO_20170321')
-ismn_obj=ISMNdata_USA(path,breaktime='2007-01-01',timeframe=timeframe)
+ismn_obj=ISMNdata_USA(timeframe=timeframe,breaktime='2007-01-01')
 data=QDEGdata_D(products=['cci_22'])
 ts_cci=data.read_gpi(737687,timeframe[0],timeframe[1])
 try:
     DF_Time=ismn_obj.merge_stations_around_gpi(737687,ts_cci/100)  
 except:
     print('GPI failed for ISMN data')
-'''
+
+ttime=['2007-07-01','2011-10-01','2012-07-01']
+test_data=QDEGdata_M(products=['cci_31_active','cci_31_passive','cci_31'])
+ts3=test_data.read_gpi(339656,ttime[0],ttime[2])
 
 
-'''
-ttime=['2002-07-01','2007-01-01','2015-10-01']
 
-#test_data=QDEGdata_D(products=['gldas_v21','gldas_merged','cci_31','cci_22'],resample='0:00')
-test_data=QDEGdata_M(products=['gldas-merged-from-file','merra2','cci_31','cci_22'])
-ts3=test_data.read_gpi(497651,ttime[0],ttime[2])
-'''
-'''
-'''
-
-'''
 #test_data=QDEGdata_M(products=['cci_22','cci_31','gldas_v2'])
 #gpi_inh: 363662,406520
 test_data=QDEGdata_M(products=['merra2','cci_22'])
@@ -624,8 +678,7 @@ plt.savefig(r'C:\Users\wpreimes\Desktop\ex_inh1.png', dpi=None, facecolor='w', e
         orientation='portrait', papertype=None, format=None,
         transparent=False, bbox_inches=None, pad_inches=0.1,
         frameon=None)
-'''
-'''
+
 test_data=QDEGdata_M(products=['merra2'])
 ts2=test_data.read_gpi(,ttime[0],ttime[2])
 

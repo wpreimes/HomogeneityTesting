@@ -25,8 +25,10 @@ from HomogeneityTesting.otherfunctions import regress
 
 warnings.simplefilter(action = "ignore", category = RuntimeWarning)
 
-from HomogeneityTesting.import_data import QDEGdata_D,QDEGdata_M, ISMNdata_USA
+from HomogeneityTesting.import_data import QDEGdata_M
+from HomogeneityTesting.import_data import QDEGdata_D,ISMNdata_USA
 import matplotlib.pyplot as plt
+
 def datetime2matlabdn(dt):
    ord = dt.toordinal()
    mdn = dt + timedelta(days = 366)
@@ -67,8 +69,8 @@ class homog_test(object):
             self.data=QDEGdata_M(products=[ref_prod,test_prod])
         
         #TODO: Change!
-        if self.test_prod not in ['cci_22','cc_31']:
-            self.test_prod=self.test_prod[0:6]
+        #if self.test_prod not in ['cci_22','cci_31']:
+            #self.test_prod=self.test_prod[0:6]
         self.check_valid_cci_range()
         #self.testdata_mask=self.calc_testdata_mask(filepath=r'H:\workspace\HomogeneityTesting\output\maskfiles_cci_global\%s'%self.test_prod)
     
@@ -77,9 +79,14 @@ class homog_test(object):
         valid_ranges={'cci_22':['1980-01-01','2015-12-31'],
                       'cci_31':['1980-01-01','2015-12-31']}
         
+        if self.test_prod not in ['cci_22','cci_31']:
+            test_prod=self.test_prod[0:6]
+        else:
+            test_prod=self.test_prod
+            
         for time in self.timeframe:
-            if not valid_ranges[self.test_prod][0]<=time.strftime('%Y-%m-%d')\
-                    <=valid_ranges[self.test_prod][1]:
+            if not valid_ranges[test_prod][0]<=time.strftime('%Y-%m-%d')\
+                    <=valid_ranges[test_prod][1]:
                 self.add_log_line('Selected Timeframe is not valid for product %s' %self.test_prod)
                 raise Exception, 'Selected Timeframe is not valid for product %s' %self.test_prod
             else:
@@ -140,7 +147,7 @@ class homog_test(object):
 
 
         #Import the test data and reference datasets for the active ground point
-        try:        
+        try:
             if self.ref_prod == 'ISMN-merge':                
                 DF_Time=self.data.read_gpi(gpi,
                                            ttime[0].strftime('%Y-%m-%d'),
@@ -159,7 +166,6 @@ class homog_test(object):
                 DF_Time=DF_Time/100
         except:
             raise Exception, 'Could not import data for gpi %i' %gpi
-        
             
         DF_Time = DF_Time.rename(columns={self.ref_prod: 'refdata',
                                           self.test_prod: 'testdata'}) 
@@ -267,8 +273,8 @@ class homog_test(object):
         
         return {'Wilkoxon':Wilkoxon, 'FlignerKilleen':FlignerKilleen}
 
-        '''
-    #def adjust_TS(self,h_WK,h_FK):
+    '''   
+    def adjust_TS(self,h_WK,h_FK):
         #%%
         #Perform adjustment of Timeseries AFTER breaktime (if inhomogeneity exists data AFTER the breaktime
         #is matched to data BEFORE breaktime)  
@@ -278,7 +284,7 @@ class homog_test(object):
             if h_FK==1:
                print 'FK test found inhomogeneity'
 
-               
+  
             B=[]
             rval=[]
             pval=[]
@@ -299,7 +305,7 @@ class homog_test(object):
             if any(r < 0 for r in rval):
                 print 'negative correlation found, adjustment NOT performed'
                 raise Exception, 'negative correlation found, adjustment NOT performed'
-    #TODO:WICHTIG: Hier war urspünglich > 0.05:??????
+                #TODO:WICHTIG: Hier war urspünglich > 0.05:??????
             if any(p > 0.05 for p in pval):
                 print 'positive correlation not significant, adjustment NOT performed'
                 raise Exception, 'positive correlation not significant, adjustment NOT performed'
@@ -323,8 +329,8 @@ class homog_test(object):
     
         else:
             print 'No inhomogeneity was found between %s and %s' %(str(self.timeframe[0]),
-                                                                   str(self.timeframe[1]))
-       ''' 
+                                                                   str(self.timeframe[1])) 
+    '''
                        
 
         

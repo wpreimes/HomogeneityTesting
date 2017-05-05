@@ -23,39 +23,37 @@ from HomogeneityTesting.interface import homog_test
 from HomogeneityTesting.otherplots import inhomo_plot_with_stats,calc_longest_homogeneous_period,show_tested_gpis
 import numpy as np
 import os
-from matplotlib.colors import LinearSegmentedColormap
 from datetime import datetime
 
 
 def start(test_prod,ref_prod,QDEG_gpi_csv,workpath):
     
-    if test_prod in ['cci_22_from_file','cci_22']:
+    if 'cci_22' in test_prod:
         
-        breaktimes=['2002-07-01','2011-10-01','1991-08-01',
-                    '2012-07-01','2007-01-01','1998-01-01']
+        breaktimes=['2012-07-01','2011-10-01','2007-01-01','2002-07-01','1998-01-01','1991-08-01']
                     
-        timeframes=[['1998-01-01','2007-01-01'],
+        timeframes=[['2011-10-01','2015-01-01'],
                     ['2007-01-01','2012-07-01'],
-                    ['1987-07-01','1998-01-01'],
-                    ['2011-10-01','2015-01-01'],
                     ['2002-07-01','2011-10-01'],
-                    ['1991-08-01','2002-07-01']]
-                    
-    elif test_prod in ['cci_31_from_file','cci_31']:
+                    ['1998-01-01','2007-01-01'],
+                    ['1991-08-01','2002-07-01'],
+                    ['1987-07-01','1998-01-01']]
+       
+    elif 'cci_31' in test_prod:
         
-        breaktimes=['2002-07-01','2007-01-01','2007-10-01',
-                    '2010-07-01','2011-10-01','2012-07-01',
-                    '2015-05-01','1991-08-01','1998-01-01']
+        breaktimes=['2015-05-01','2012-07-01','2011-10-01',
+                    '2010-07-01','2007-10-01','2007-01-01',
+                    '2002-07-01','1998-01-01','1991-08-01']
                     
-        timeframes=[['1998-01-01','2007-01-01'],
-                    ['2002-07-01','2007-10-01'],
-                    ['2007-01-01','2010-07-01'],
-                    ['2007-10-01','2011-10-01'],
-                    ['2010-07-01','2012-07-01'],
+        timeframes=[['2012-07-01','2015-12-31'],
                     ['2011-10-01','2015-05-01'],
-                    ['2012-07-01','2015-12-31'],
-                    ['1987-09-01','1998-01-01'],
-                    ['1991-08-01','2002-07-01']]
+                    ['2010-07-01','2012-07-01'],
+                    ['2007-10-01','2011-10-01'],
+                    ['2007-01-01','2010-07-01'],
+                    ['2002-07-01','2007-10-01'],
+                    ['1998-01-01','2007-01-01'],
+                    ['1991-08-01','2002-07-01'],
+                    ['1987-09-01','1998-01-01']]
     else:
         raise Exception, 'Test product unknown'
         
@@ -70,12 +68,12 @@ def start(test_prod,ref_prod,QDEG_gpi_csv,workpath):
     for breaktime,timeframe in zip(breaktimes,timeframes):
             try:
                 test_obj=homog_test(QDEG_gpi_csv,
-                                    test_prod=test_prod,
-                                    ref_prod=ref_prod,
-                                    timeframe=timeframe,                    
-                                    breaktime=breaktime,
-                                    alpha=0.01,
-                                    workpath=workpath)
+                                    test_prod,
+                                    ref_prod,
+                                    timeframe,                    
+                                    breaktime,
+                                    0.01,
+                                    workpath)
             except: continue
             
             
@@ -149,8 +147,6 @@ def start(test_prod,ref_prod,QDEG_gpi_csv,workpath):
     test_obj.add_log_line('Created Plot for Longest Homogeneous Period')  
 
 
-    #TODO: Create Scatterplot for comparing RTG and RTM
-
 
 
 #Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
@@ -164,10 +160,18 @@ start('cci_22','ISMN-merge',
       r'H:\workspace\HomogeneityTesting\output')  
 
 '''
+start('cci_31_passive','merra2',
+      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
+      r'H:\workspace\HomogeneityTesting\output') 
+'''      
+start('cci_31_passive','merra2',
+      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
+      r'H:\workspace\HomogeneityTesting\output') 
+      
 start('cci_31','merra2',
       r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
       r'H:\workspace\HomogeneityTesting\output')                          
-'''
+
 start('cci_22','merra2',
       r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
       r'H:\workspace\HomogeneityTesting\output')    
