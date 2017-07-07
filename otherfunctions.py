@@ -9,6 +9,7 @@ from scipy import stats
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from datetime import datetime,timedelta
 
 def regress(dataframe):
     '''
@@ -32,6 +33,12 @@ def regress(dataframe):
 
     return out, R, pval, ress
 
+
+def datetime2matlabdn(dt):
+   ord = dt.toordinal()
+   mdn = dt + timedelta(days = 366)
+   frac = (dt-datetime(dt.year,dt.month,dt.day,0,0,0)).seconds / (24.0 * 60.0 * 60.0)
+   return mdn.toordinal() + frac    
     
           
 def fill_holes_lress(fill_series,other_series):

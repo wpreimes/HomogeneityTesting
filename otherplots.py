@@ -7,17 +7,22 @@ Created on Wed Mar 22 17:06:28 2017
 import numpy as np
 import math
 import os,glob
-from datetime import datetime
+from datetime import datetime,timedelta
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 
-from HomogeneityTesting.import_data import QDEGdata_M
+from HomogeneityTesting.import_satellite_data import QDEGdata_M
 from scipy import stats
 from HomogeneityTesting.otherfunctions import regress
-
+from points_to_netcdf import points_to_netcdf
+from netCDF4 import Dataset
+import pygeogrids.netcdf as nc
+import rsdata.root_path as root
+from HomogeneityTesting.points_to_netcdf import globalCellgrid
+from HomogeneityTesting.points_to_netcdf import points_to_netcdf
 
 class nlcmap(object):
     def __init__(self, cmap, levels):
@@ -169,8 +174,8 @@ def compare_RTM_RTG(workdir,model_prod):
             DF_Points_model=pd.read_csv(os.path.join(model_file),index_col=0)
             
             if (DF_Points_ismn.index==DF_Points_model.index).all():
-                DF_Points_merged=DF_Points_model[['lat','lon','h_all']].rename(columns={'h_all':model_prod})
-                DF_Points_merged['ISMN-merge']=DF_Points_ismn['h_all']               
+                DF_Points_merged=DF_Points_model[['lat','lon','test_results']].rename(columns={'test_results':model_prod})
+                DF_Points_merged['ISMN-merge']=DF_Points_ismn['test_results']
                 DF_Points_merged=DF_Points_merged.dropna(how='any')
                 DF_Points_merged['diff']=np.nan
                 if not DF_Points_merged.empty:
@@ -198,11 +203,12 @@ def compare_RTM_RTG(workdir,model_prod):
         axs[i].set_ylim([0,200])
         axs[i].set_xticks(np.arange(-2, 2, 1.0))
         axs[i].set_title('Break: '+str(times[model_prod]['breaktimes'][i]))
-    
+    '''
     fig.text(0.5, 0.03, 'Comparison Class', ha='center', va='center',fontsize=12)
     fig.text(0.09, 0.5, 'Number of Tests', ha='center', va='center', rotation='vertical',fontsize=12)
     fig.text(0.58, -0.04, '0=No difference between RTM and RTG \n 1=RTM found Break, RTG not \n -1=RTG found Break, RTM not', 
-             style='italic',bbox={'facecolor':'grey', 'alpha':0.5, 'pad':10})            
+             style='italic',bbox={'facecolor':'grey', 'alpha':0.5, 'pad':10})     
+    '''
     fig.savefig(os.path.join(workdir,'RTM_vs_RTG'))
     print('Number of points to compare:'+str(comp_meas))
 
@@ -231,12 +237,12 @@ def show_tested_gpis(workdir,ref_prod):
        
     for f,breaktime,starttime,endtime in zip(fileslist,breaktimes,starttimes,endtimes):
         DF_Points=pd.read_csv(f,index_col=0,usecols=[0,6,7],header=0,
-                                       names=['gpi_quarter','h_all','message'])
+                                       names=['gpi_quarter','test_results','message'])
         
         DF_Points['TestGroups']=np.nan
         
         for gpi in DF_Points.index.values:
-            h=pd.isnull(DF_Points.h_all.loc[gpi])
+            h=pd.isnull(DF_Points.test_results.loc[gpi])
             message=DF_Points.message.loc[gpi]
             if h != True and message == 'Processing OK': 
                 DF_Points.set_value(gpi,'TestGroups',0)
@@ -322,38 +328,64 @@ def show_tested_gpis(workdir,ref_prod):
                      
                                          
 
+def csv_to_netcdf(workdir):
+
+    workdir = r"H:\workspace\HomogeneityTesting\output\CCI22EGU"
+    fileslist = glob.glob(os.path.join(workdir, "DF_Points_merra2*"))
+    starttimes = []
+    breaktimes = []
+    endtimes = []
+    lons = (np.arange(360 * 4) * 0.25) - 179.875
+    lats = (np.arange(180 * 4) * 0.25) - 89.875
+    lons, lats = np.meshgrid(lons, lats)
+    for filename in fileslist:
+        DF_Points = pd.read_csv(filename, index_col=0)
+        points_to_netcdf(dataframe=DF_Points[['test_results']], path=workdir, filename=filename)
 
 
 def inhomo_plot_with_stats(workdir):
-    fileslist=glob.glob(os.path.join(workdir,"DF_Points*.csv"))
+    fileslist=glob.glob(os.path.join(workdir,"HomogeneityTest_merra2*.nc"))
     starttimes=[]
     breaktimes=[]
     endtimes=[]
     
-    lons = (np.arange(360*4)*0.25)-179.875
-    lats = (np.arange(180*4)*0.25)-89.875
-    lons,lats = np.meshgrid(lons,lats)    
-    
+    #lons = (np.arange(360*4)*0.25)-179.875
+    #lats = (np.arange(180*4)*0.25)-89.875
+    #lons,lats = np.meshgrid(lons,lats)
+    globgrid = globalCellgrid()
+    lons = np.unique(globgrid.get_grid_points()[1])
+    lats = np.unique(globgrid.get_grid_points()[2])
+
+
     for filename in fileslist:
-        DF_Points=pd.read_csv(filename,index_col=0)
+
+        ncfile = Dataset(filename)
+
+
+        data = ncfile.variables['test_results'][:]
+
+        data = data.flatten('F')
+
+
+        DF_Points = pd.DataFrame(index=globgrid.get_grid_points()[0],
+                                 data={'lat': globgrid.get_grid_points()[1],
+                                       'lon': globgrid.get_grid_points()[0],
+                                       'test_results': data})
         
-        filename=filename.replace(workdir,'')
-        filename=filename.replace('.','_')
-        splitname=filename.split('_')
-        ref_prod=splitname[2]
-        starttime=datetime.strptime(splitname[3], '%Y-%m-%d')
-        endtime=datetime.strptime(splitname[5], '%Y-%m-%d')
-        breaktime=datetime.strptime(splitname[4], '%Y-%m-%d')
-    
-        
-        all_gpis=DF_Points.h_all.size
-        tested_gpis=DF_Points['h_all'].loc[DF_Points['h_all'].isin([1.,2.,3.,4.])].size
-        hwk_gpis=DF_Points['h_all'].loc[DF_Points['h_all'].isin([1.,3.])].size
-        hfk_gpis=DF_Points['h_all'].loc[DF_Points['h_all'].isin([2.,3.])].size
-        hboth_gpis=DF_Points['h_all'].loc[DF_Points['h_all'].isin([3.])].size
-        
-        
-        
+        filename = filename.replace(workdir,'')
+        filename = filename.replace('.','_')
+        splitname = filename.split('_')
+        ref_prod = splitname[1]
+        #starttime=datetime.strptime(splitname[3], '%Y-%m-%d')
+        #endtime=datetime.strptime(splitname[5], '%Y-%m-%d')
+        breaktime = datetime.strptime(splitname[2], '%Y-%m-%d')
+
+        all_gpis = DF_Points['test_results'].size
+        tested_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([1.,2.,3.,4.])].size
+        hwk_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([1.,3.])].size
+        hfk_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([2.,3.])].size
+        hboth_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([3.])].size
+
         all_tested=(float(tested_gpis)/float(all_gpis))*100.
         try:
             wk_tested=(float(hwk_gpis)/float(tested_gpis))*100.         
@@ -374,16 +406,16 @@ def inhomo_plot_with_stats(workdir):
                                                N=4)
                                                
         img = np.empty(lons.size,dtype='float32')
-        img.fill(None)
-        img[DF_Points.index.values] = DF_Points['h_all'].values
+        img.fill(np.nan)
+        img[DF_Points.index.values] = DF_Points['test_results'].values
         
         # mask array where invalid values (nans) occur
         img_masked = np.ma.masked_invalid(img.reshape((180*4,360*4)))
 
         f = plt.figure(num=None, figsize=(20,10), dpi=90, facecolor='w', edgecolor='k')
     
-        m = Basemap(projection='mill',llcrnrlat=-60,urcrnrlat=80,\
-                llcrnrlon=-180,urcrnrlon=180,resolution='c',)
+        m = Basemap(projection='mill',llcrnrlat=-60,urcrnrlat=80,
+                    llcrnrlon=-180,urcrnrlon=180,resolution='c',)
 
         m.drawcoastlines()
         m.drawcountries()
@@ -412,11 +444,10 @@ def inhomo_plot_with_stats(workdir):
         
         filename='HomogeneityTest_%s_(breaktime-%s)' %(ref_prod,breaktime.strftime("%Y-%m-%d"))           
         plt.savefig(workdir + '\\'+ filename + '.png', dpi = f.dpi)
-                                               
 
 
   
-def calc_longest_homogeneous_period(workdir,test_prod,ref_prod):
+def calc_longest_homogeneous_period(workdir,test_prod,ref_prod,same_colorbar=False):
     #TODO: This function is bad...
     fileslist=glob.glob(os.path.join(workdir,"DF_Points_%s*.csv"%ref_prod))
     starttimes=[]
@@ -427,9 +458,9 @@ def calc_longest_homogeneous_period(workdir,test_prod,ref_prod):
         filename=filename.replace(workdir,'')
         filename=filename.replace('.','_')
         splitname=filename.split('_')
-        starttimes.append(datetime.strptime(splitname[3], '%Y-%m-%d'))
-        endtimes.append(datetime.strptime(splitname[5], '%Y-%m-%d'))
-        breaktimes.append(datetime.strptime(splitname[4], '%Y-%m-%d'))
+        #starttimes.append(datetime.strptime(splitname[3], '%Y-%m-%d'))
+        #endtimes.append(datetime.strptime(splitname[5], '%Y-%m-%d'))
+        breaktimes.append(datetime.strptime(splitname[2], '%Y-%m-%d'))
     
     DF_Period = pd.concat([pd.read_csv(f,index_col=0,usecols=[0,6],header=0,
                                        names=['gpi_quarter',breaktimes[i]]) for i,f in enumerate(fileslist)],axis=1)   
@@ -444,16 +475,17 @@ def calc_longest_homogeneous_period(workdir,test_prod,ref_prod):
     DF_Period['%i'%i]=(endtimes[-1]-breaktimes[-1]).days
     periods=map(list,DF_Period[DF_Period.columns.values[-i:]].values)
     calcs=map(list,DF_Period[breaktimes].values)
-    results=[]    
+    results=[]
+
     for values,ops in zip(periods,calcs):
         ops.append([4.0,np.nan])
         r=[]
-
         while ops:
             if ops[0]!=4.0:
                 r.append(values[0])
                 del values[0]
                 del ops[0]
+
             elif ops[0] == 4.0:
                 values[1]+=values[0]
                 del ops[0]
@@ -462,16 +494,52 @@ def calc_longest_homogeneous_period(workdir,test_prod,ref_prod):
         results.append(r)        
     
     max_period=[]
+    startdays=[]
+
+
     for periods in results:
         if max(periods) in periodsizes:
             max_period.append(np.nan)
+            startdays.append(np.nan)
+
         else:
-            max_period.append(max(periods)/365.)
+            pos = periods.index(max(periods))
+            max_period.append(periods[pos])
+            startdays.append(sum(periods[:pos]))
 
-    DF_Period['max_Period']=max_period
 
 
+    first_date=starttimes[0]
+    startdates=[]
+    startyears=[]
+    enddates=[]
+    endyears=[]
+    for start,maxperiod in zip(startdays,max_period):
+        if np.isnan(start) or np.isnan(maxperiod):
+            startdates.append(np.nan)
+            enddates.append(np.nan)
+            startyears.append(np.nan)
+            endyears.append(np.nan)
+        else:
+            startdate=first_date + timedelta(days=int(start))
+            enddate=startdate+timedelta(days=int(maxperiod))
+            startdates.append(startdate)
+            enddates.append(enddate)
+            startyears.append(startdate.year)
+            endyears.append(enddate.year)
 
+    startdates=np.asarray(startdates)
+    enddates=np.asarray(enddates)
+    max_period=np.asarray(max_period)/365.
+    DF_Period['max_Period'] = max_period
+    DF_Period['startdate'] = startdates
+    DF_Period['endate'] = enddates
+    DF_Period['startyear']=startyears
+    DF_Period['endyear'] = endyears
+
+
+    points_to_netcdf(DF_Period[['endyear']],workdir,None,'startendyears',None,None)
+    points_to_netcdf(DF_Period[['startyear']], workdir, None, 'startendyears', None, None)
     lons = (np.arange(360*4)*0.25)-179.875
     lats = (np.arange(180*4)*0.25)-89.875
     lons,lats = np.meshgrid(lons,lats)
@@ -485,7 +553,7 @@ def calc_longest_homogeneous_period(workdir,test_prod,ref_prod):
         cbrange=(6,20)
     '''          
     
-    if test_prod=='cci_31':
+    if (test_prod[:6]=='cci_31') or (same_colorbar==True):
         levels=[8,11.5,15.5,21]
         cmaplist=[(0.5,0,0,1),(0.7,0,0,1),(1,0.2,0.2,1),(1,0.2,0.2,1),
           #(0.3,0.3,0.3,1),(0.5,0.5,0.5,1),(0.5,0.5,0.5,1),
@@ -494,7 +562,7 @@ def calc_longest_homogeneous_period(workdir,test_prod,ref_prod):
         #cmaplist=[(0.5,0,0,1),(0.7,0,0,1),(1,0.2,0.2,1),(1,0.2,0.2,1),
           #(0,0.7,0.7,1),(0,0.7,0.7,1),
           #(0,0.6,0.7,1),(0,0.3,1,1),(0,0,0.8,1),(0,0,0.8,1),(0,0,0.5,1)]
-    if test_prod=='cci_22':
+    elif test_prod[:6]=='cci_22':
         cmaplist=[(0.5,0,0,1),(0.7,0,0,1),(1,0.2,0.2,1),(1,0.2,0.2,1),
           #(0.3,0.3,0.3,1),(0.5,0.5,0.5,1),(0.5,0.5,0.5,1),
           (0,0.7,0.7,1),
@@ -584,9 +652,9 @@ def extreme_break(workdir,ref_prod,test_prod):
 
     
 #extreme_break(r'H:\workspace\HomogeneityTesting\output\CCI22EGU','gldas_v2','cci_22')
-#inhomo_plot_with_stats(r'H:\workspace\HomogeneityTesting\output\v24')
-#calc_longest_homogeneous_period(r'H:\workspace\HomogeneityTesting\output\CCI31EGU','cci_31','merra2')
-#show_tested_gpis(r'H:\workspace\HomogeneityTesting\output\v32','merra2')
+inhomo_plot_with_stats(r"H:\workspace\HomogeneityTesting\output\CCI33")
+#calc_longest_homogeneous_period(r"H:\workspace\HomogeneityTesting\output\CCI22EGU",'cci_22','merra2')
+#show_tested_gpis(r"H:\workspace\HomogeneityTesting\output\CCI31EGU",'merra2')
 #inhomo_plot_with_stats(r'H:\workspace\HomogeneityTesting\output\v32')
 #compare_RTM_RTG(r'H:\workspace\HomogeneityTesting\output\CCI31EGU','merra2')
 #show_tested_gpis(r"H:\workspace\HomogeneityTesting\output\v30",'gldas-merged')
