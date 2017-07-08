@@ -139,6 +139,11 @@ class HomogTest(object):
 
         return h, stats_fk
 
+    @staticmethod
+    def vn_test():
+        #TODO: implement von Neumann test
+        pass
+    
     def _init_validate_cci_range(self):
         # type: (None) -> list
         valid_ranges = {'cci_22': ['1980-01-01', '2014-12-31'],
