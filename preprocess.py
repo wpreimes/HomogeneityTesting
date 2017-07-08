@@ -7,11 +7,11 @@ Created on Tue Aug 09 10:12:54 2016
 
 import numpy as np
 import pandas as pd
-  
-def check_continuity(tmp_ts,max_gap=5):
-    
-    ts = tmp_ts.copy()    
-    
+
+
+def check_continuity(tmp_ts, max_gap=5):
+    ts = tmp_ts.copy()
+
     istart = []
     iend = []
     lens = []
@@ -19,31 +19,30 @@ def check_continuity(tmp_ts,max_gap=5):
 
     in_seg = False
     nan_cnt = 0
-  
+
     for ind in ts.index:
-        
+
         if not np.isnan(ts[ind]):
             nan_cnt = 0
-            not_nan = ind 
+            not_nan = ind
             if in_seg == False:
-                istart.append(np.where(ts.index==ind)[0][0].astype('int'))
+                istart.append(np.where(ts.index == ind)[0][0].astype('int'))
                 in_seg = True
-                
+
         else:
             nan_cnt += 1
-            if (in_seg==True)&(nan_cnt==max_gap):
-                iend.append(np.where(ts.index==not_nan)[0][0].astype('int'))
+            if (in_seg == True) & (nan_cnt == max_gap):
+                iend.append(np.where(ts.index == not_nan)[0][0].astype('int'))
                 in_seg = False
 
     if len(iend) < len(istart):
-        iend.append(len(ts)-1)
-    
+        iend.append(len(ts) - 1)
+
     for ind in np.arange(len(istart)):
-        
-        seg = ts.iloc[istart[ind]:iend[ind]+1]
+        seg = ts.iloc[istart[ind]:iend[ind] + 1]
         lens.append(len(seg))
         oklens.append(len(seg[~np.isnan(seg)]))
-        
+
     return istart, iend, lens, oklens
 
 
@@ -57,26 +56,23 @@ def add_nan(dataframe):
     '''
     idx = pd.date_range(dataframe.index[0], dataframe.index[-1])
     dataframe.index = pd.DatetimeIndex(dataframe.index)
-    dataframe = dataframe.reindex(idx, fill_value=np.nan) 
-    return dataframe  
+    dataframe = dataframe.reindex(idx, fill_value=np.nan)
+    return dataframe
 
 
-    
-def fill_gaps(tmp_data,max_gap=10):
-    
+def fill_gaps(tmp_data, max_gap=10):
     from mathnew.smoothn import smoothn
 
     data = tmp_data.copy()
-    
-    istart, iend, lens, oklens = check_continuity(data,max_gap=max_gap)
+
+    istart, iend, lens, oklens = check_continuity(data, max_gap=max_gap)
 
     for ind in np.arange(len(istart)):
-        
-        smoothed = smoothn(data.iloc[istart[ind]:iend[ind]+1].values.copy(),s=0)
-        #DF_Time['sm_nogaps'] = smoothed
-        data.iloc[istart[ind]:iend[ind]+1] = smoothed
-        data[data<0]=0
-        
+        smoothed = smoothn(data.iloc[istart[ind]:iend[ind] + 1].values.copy(), s=0)
+        # DF_Time['sm_nogaps'] = smoothed
+        data.iloc[istart[ind]:iend[ind] + 1] = smoothed
+        data[data < 0] = 0
+
     return data
 
 
@@ -86,7 +82,7 @@ def confirm(prompt=None, resp=False):
     prompts for yes or no response from the user. Returns True for yes and
     False for no.
     '''
-    
+
     if prompt is None:
         prompt = 'Confirm'
 
@@ -94,7 +90,7 @@ def confirm(prompt=None, resp=False):
         prompt = '%s [%s]|%s: ' % (prompt, 'y', 'n')
     else:
         prompt = '%s [%s]|%s: ' % (prompt, 'n', 'y')
-        
+
     while True:
         ans = raw_input(prompt)
         if not ans:
@@ -107,7 +103,7 @@ def confirm(prompt=None, resp=False):
         if ans == 'n' or ans == 'N':
             return False
 
-    
+
 def calc_subseries(data):
     '''
     Find series of consecutive data in a dataseries (not interrupted by nans)
@@ -118,29 +114,28 @@ def calc_subseries(data):
     startend: Information on the start and end position of the subseries
     in the original data series
     '''
-    data=np.array(data)    
-    datamask=[]
-    datastart=np.NaN
+    data = np.array(data)
+    datamask = []
+    datastart = np.NaN
     for index, value in enumerate(data):
-        if np.isnan(value)==False and np.isnan(datastart)==True:
-            datastart=index
-        if np.isnan(value)== True and np.isnan(datastart)==False:
-            datamask.append([datastart,index-1])
-            datastart=np.NaN
-    if np.isnan(datastart)==False:
-        datamask.append([datastart,data.size-1])
-    
-    startend=[]
-    subseries=[]
+        if np.isnan(value) == False and np.isnan(datastart) == True:
+            datastart = index
+        if np.isnan(value) == True and np.isnan(datastart) == False:
+            datamask.append([datastart, index - 1])
+            datastart = np.NaN
+    if np.isnan(datastart) == False:
+        datamask.append([datastart, data.size - 1])
+
+    startend = []
+    subseries = []
     for subset in datamask:
-        startend.append(np.array([subset[0],subset[1]]))
+        startend.append(np.array([subset[0], subset[1]]))
         subseries.append(data[subset[0]:subset[1]])
-    
-    
-    return subseries,startend
+
+    return subseries, startend
 
 
-def remove_outliers(column,b,t):
+def remove_outliers(column, b, t):
     '''
     Removes all data from a dataframe column above and below the selected
     percentiles
@@ -159,12 +154,10 @@ def remove_outliers(column,b,t):
         
     points: a list of points which where removed during filtering
     '''
-    toppercentile=np.nanpercentile(column,t)
-    bottompercentile=np.nanpercentile(column,b)
-    points=column[(column > toppercentile) | (column < bottompercentile)].index.values
-    size=points.size
-    column[(column > toppercentile) | (column < bottompercentile)]=np.nan
-    print 'Removed %i values using percentiles(%i and %i): %f and %f' % (size,b,t,bottompercentile,toppercentile)    
+    toppercentile = np.nanpercentile(column, t)
+    bottompercentile = np.nanpercentile(column, b)
+    points = column[(column > toppercentile) | (column < bottompercentile)].index.values
+    size = points.size
+    column[(column > toppercentile) | (column < bottompercentile)] = np.nan
+    print 'Removed %i values using percentiles(%i and %i): %f and %f' % (size, b, t, bottompercentile, toppercentile)
     return column, points
-  
-  

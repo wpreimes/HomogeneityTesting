@@ -10,23 +10,22 @@ from points_to_netcdf import points_to_netcdf
 
 
 class SaveResults(object):
-    
     def __init__(self, path, grid, filename, buffer_size=200):
         # type: (str,object,str,int) -> None
-        self.total_number=[0,]
-        self.filename=filename
+        self.total_number = [0, ]
+        self.filename = filename
         self.path = path
         self.grid = grid
         self.buffer_size = buffer_size
         self.data = {'gpi': [], 'h_fk': [], 'h_wk': [], 'test_results': [], 'status': []}
-    
+
     def reset_data(self):
         self.data = {'gpi': [], 'h_fk': [], 'h_wk': [], 'test_results': [], 'status': []}
-        
+
     def extract_infos(self, data_dict):
         # type: (dict) -> dict
         status = int(data_dict['status'][0])
-        if status in range(3,10):
+        if status in range(3, 10):
             return {'h_wk': np.nan, 'h_fk': np.nan, 'test_results': np.nan, 'status': status}
         else:
             wk = data_dict['wilkoxon']['h']
@@ -49,7 +48,7 @@ class SaveResults(object):
                     all = 1.0
             elif fk == 1:
                 all = 2.0
-                 
+
             return {'h_wk': wk, 'h_fk': fk, 'test_results': all, 'status': status}
 
     def fill_buffer(self, gpi, data_dict):
@@ -64,12 +63,12 @@ class SaveResults(object):
 
     def save_to_netcdf(self):
         var_meta_dicts = {
-                        'test_results': {
-                                 'Description': 'Homogeneity Test Results Classified',
-                                 'Values': '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None'},
-                        'status': {
-                                  'Description': 'Homogeneity Testing Status',
-                                  'Values': '0 = Processing OK, \
+            'test_results': {
+                'Description': 'Homogeneity Test Results Classified',
+                'Values': '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None'},
+            'status': {
+                'Description': 'Homogeneity Testing Status',
+                'Values': '0 = Processing OK, \
                                              1 = Error during WK testing,\
                                              2 = Error during FK testing,\
                                              3 = No coinciding data for the selected timeframe,\
@@ -79,8 +78,8 @@ class SaveResults(object):
                                              7 = Negative or NaN correlation,\
                                              8 = WK test and FK test failed,\
                                              9 = Error reading gpi'
-                                             }
-                        }
+            }
+        }
         df = pd.DataFrame.from_dict(self.data)
         df = df.set_index('gpi')
 
@@ -89,7 +88,8 @@ class SaveResults(object):
                          var_meta_dicts=var_meta_dicts)
 
         self.reset_data()
-                   
+
+
 '''     
 test_obj.DF_Points['test_results']=np.nan
 test_obj.DF_Points['message']='Not processed'

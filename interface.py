@@ -24,7 +24,6 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
 
 class HomogTest(object):
-    
     def __init__(self, test_prod, ref_prod, timeframe, breaktime, alpha, anomaly):
         # type: (str,str,list,str,float,bool) -> None
         '''
@@ -41,16 +40,16 @@ class HomogTest(object):
                           datetime.strptime(timeframe[1], '%Y-%m-%d')]
         self.breaktime = datetime.strptime(breaktime, '%Y-%m-%d')
         self.alpha = alpha
-        
+
         self.anomaly = anomaly
-        
+
         if self.ref_prod == 'ISMN-merge':
             self.data = QDEGdata_M(products=[test_prod])
             self.ismndata = ISMNdataUSA(self.timeframe, self.breaktime, max_depth=0.1)
-        
+
         else:
             self.data = QDEGdata_M(products=[self.ref_prod, self.test_prod])
-        
+
         self.valid_range = self._init_validate_cci_range()
 
     @staticmethod
@@ -79,7 +78,6 @@ class HomogTest(object):
             Dataframe: 2 columns
                 column1 (data): difference data Q    column2 (group): group number (1 or 2 für reference data or testdata)
         '''
-
 
         # number of measurements and datagroups
         df = dataframe.rename(columns={dataframe.ix[:, 0].name: 'data'})
@@ -161,11 +159,11 @@ class HomogTest(object):
                 raise Exception('Selected Timeframe is not valid for product %s' % self.test_prod)
             else:
                 return valid_ranges[name]
-     
+
     def read_gpi(self, gpi):
         # type: (int) -> pd.DataFrame
         # Observation and reference data
-        
+
         ttime = [self.timeframe[0], self.breaktime, self.timeframe[1]]
 
         # Import the test data and reference datasets for the active ground point
@@ -176,10 +174,10 @@ class HomogTest(object):
             else:
                 try:
                     df_time = (self.data).read_gpi(gpi, self.valid_range[0], self.valid_range[1])
-                    df_time=df_time / 100   #type: pd.DataFrame
+                    df_time = df_time / 100  # type: pd.DataFrame
                     df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
                     df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
-                    df_time=df_time.loc[ttime[0].strftime('%Y-%m-%d'):ttime[1].strftime('%Y-%m-%d')]
+                    df_time = df_time.loc[ttime[0].strftime('%Y-%m-%d'):ttime[1].strftime('%Y-%m-%d')]
                 except:
                     raise Exception('9: Could not import data for gpi %i' % gpi)
         else:
@@ -187,7 +185,7 @@ class HomogTest(object):
                 if self.ref_prod == 'ISMN-merge':
                     df_time = self.data.read_gpi(gpi, ttime[0].strftime('%Y-%m-%d'), ttime[2].strftime('%Y-%m-%d'))
 
-                    df_time = df_time / 100   # type: pd.DataFrame
+                    df_time = df_time / 100  # type: pd.DataFrame
 
                     df_time['ISMN-merge'] = self.ismndata.merge_stations_around_gpi(gpi, df_time[self.test_prod])
                 else:
@@ -202,7 +200,7 @@ class HomogTest(object):
                     df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
             except:
                 raise Exception('9: Could not import data for gpi %i' % gpi)
-            
+
         df_time = df_time.rename(columns={self.ref_prod: 'refdata',
                                           self.test_prod: 'testdata'})
 
@@ -217,20 +215,20 @@ class HomogTest(object):
         min_data_size = 3
 
         df_time = self.read_gpi(gpi)
-        
+
         # Check if any data is left for testdata and reference data
         if df_time.isnull().all().refdata or df_time.isnull().all().testdata:
             raise Exception('3: No coinciding data for the selected timeframe')
-            
+
         # Check if lengths of remaining datasets equal
         if df_time['refdata'].index.size != df_time['testdata'].index.size:
             raise Exception('4: Test timeseries and reference timeseries do not match')
-                
+
         # TODO: Check if Dataseries coincide in time
-           
+
         # Calculation of Spearman-Correlation coefficient
         corr, pval = stats.spearmanr(df_time['testdata'], df_time['refdata'])
-        
+
         # Check the rank correlation so that correlation is positive and significant at 0.05
         if not (corr > 0 and pval < 0.01):
             raise Exception('5: Spearman correlation failed with correlation %f \ '
@@ -239,30 +237,30 @@ class HomogTest(object):
         # Relative Test
         # Divide Time Series into subgroubs according to timeframe and breaktime
         df_time['group'] = np.nan
-        
+
         i1 = df_time.loc[self.timeframe[0]:self.breaktime]
-        i2 = df_time.loc[self.breaktime+pd.DateOffset(1):self.timeframe[1]]
+        i2 = df_time.loc[self.breaktime + pd.DateOffset(1):self.timeframe[1]]
 
         df_time.loc[i1.index, 'group'] = 0
         df_time.loc[i2.index, 'group'] = 1
         ni1 = len(i1.index)
         ni2 = len(i2.index)
-        
+
         df_time = df_time.dropna()
-    
+
         # Check if group data sizes are above selected minimum size
         if ni1 < min_data_size or ni2 < min_data_size:
             raise Exception('6: Minimum Dataseries Length not reached. Size is %i and/or %i !> %i'
                             % (ni1, ni2, min_data_size))
 
         df_time['bias_corr_refdata'], rxy, pval, ress = regress(df_time)
-        
+
         if any(np.isnan(ress)):
             raise Exception('7: Negative or NaN correlation')
-        
+
         # Calculate difference TimeSeries
-        df_time['Q'] = df_time.testdata-df_time.bias_corr_refdata
-        
+        df_time['Q'] = df_time.testdata - df_time.bias_corr_refdata
+
         # Wilcoxon rank sum test
         if 'wk' in tests:
             try:
@@ -294,7 +292,7 @@ class HomogTest(object):
             raise Exception('8: WK test and FK test failed')
 
         return df_time, {'wilkoxon': wilkoxon, 'fligner_killeen': fligner_killeen}
-        
+
     def save_as_mat(self, gpi):
         # type: (int) -> None
         # Saves the SM data for the active time frame for the selected gpi as .mat
@@ -303,8 +301,7 @@ class HomogTest(object):
         exp_data = self.data.read_gpi(gpi,
                                       self.timeframe[0].strftime('%Y-%m-%d'),
                                       self.timeframe[1].strftime('%Y-%m-%d'))
-        exp_data = exp_data/100  # type: pd.DataFrame
-                                    
+        exp_data = exp_data / 100  # type: pd.DataFrame
 
         matdate = []
         for dt in exp_data[self.test_prod].index:
@@ -315,11 +312,11 @@ class HomogTest(object):
 
         y = {'tspan': matdate,
              'sm': exp_data[self.test_prod].values}
-        
+
         timeframe = [datetime2matlabdn(self.timeframe[0]),
                      datetime2matlabdn(self.timeframe[1])]
 
         breaktime = datetime2matlabdn(self.breaktime)
-        
+
         data_dict = {'X': x, 'Y': y, 'timeframe': timeframe, 'breaktime': breaktime}
-        io.savemat('matlab_data\SMdata_'+str(gpi), data_dict, oned_as='column')
+        io.savemat('matlab_data\SMdata_' + str(gpi), data_dict, oned_as='column')
