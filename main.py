@@ -6,6 +6,9 @@ Created on Wed Mar 22 17:05:55 2017
 """
 
 import sys
+if r"H:\workspace" not in sys.path:
+    sys.path.append(r"H:\workspace")
+
 from typing import Union
 import os
 from datetime import datetime
@@ -14,8 +17,9 @@ import ast
 import numpy as np
 
 from HomogeneityTesting.interface import HomogTest
+from HomogeneityTesting.otherfunctions import cci_timeframes
+from HomogeneityTesting.save_data import SaveResults, save_Log
 
-from HomogeneityTesting.save_data import SaveResults
 
 
 '''
@@ -28,26 +32,6 @@ used alpha in research letter:0.01
 '''
 
 
-class Log(object):
-    def __init__(self, workfolder, test_prod, ref_prod, anomaly, cells):
-        # type: (str, str, str, bool, list) -> None
-        self.workfolder = workfolder
-        
-        with open(os.path.join(workfolder, 'log.txt'), 'w') as f:
-            f.write('Log file for HomogeneityTesting \n')
-            f.write('=====================================\n')
-            f.write('Test Product: %s \n' % test_prod)
-            f.write('Reference Product: %s \n' % ref_prod)
-            f.write('Anomaly data: %s \n' % str(anomaly))
-            f.write('Processed Cells: %s \n' % cells)
-            f.write('=====================================\n')  
-            f.write('\n')
-    
-    def add_line(self, string):
-        # type: (str) -> None
-        # Initialize and add line to log file for current process
-        with open(os.path.join(self.workfolder, 'log.txt'), 'a') as f:
-            f.write(string + '\n')
 
 
 def cells_for_continent(continent):
@@ -84,37 +68,14 @@ def create_workfolder(path):
     return workfolder       
 
 
-def start(test_prod, ref_prod, path, cells='global', anomaly=False):
-    # type: (str, str, str, Union[list,str], bool) -> None
-    
-    if 'cci_22' in test_prod:
-        
-        breaktimes = ['2012-07-01', '2011-10-01', '2007-01-01', '2002-07-01', '1998-01-01', '1991-08-01']
-                    
-        timeframes = [['2011-10-01', '2014-12-31'],
-                      ['2007-01-01', '2012-07-01'],
-                      ['2002-07-01', '2011-10-01'],
-                      ['1998-01-01', '2007-01-01'],
-                      ['1991-08-01', '2002-07-01'],
-                      ['1987-07-01', '1998-01-01']]
-       
-    elif 'cci_31' or 'cci_33' in test_prod:
-        
-        breaktimes = ['2012-07-01', '2011-10-01',
-                      '2010-07-01', '2007-10-01', '2007-01-01',
-                      '2002-07-01', '1998-01-01', '1991-08-01','2015-05-01']
-                    
-        timeframes = [['2011-10-01', '2015-05-01'],
-                      ['2010-07-01', '2012-07-01'],
-                      ['2007-10-01', '2011-10-01'],
-                      ['2007-01-01', '2010-07-01'],
-                      ['2002-07-01', '2007-10-01'],
-                      ['1998-01-01', '2007-01-01'],
-                      ['1991-08-01', '2002-07-01'],
-                      ['1987-09-01', '1998-01-01'],
-                      ['2012-07-01', '2015-12-31']]
-    else:
-        raise Exception('Test product unknown')
+def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=False):
+    # type: (str, str, str, Union[list,str], Union[list,None], bool) -> None
+
+    testtimes = cci_timeframes(test_prod, skip_times=skip_times)
+
+    timeframes = testtimes['timeframes']
+    breaktimes = testtimes['breaktimes']
+
     
     grid = load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
     
@@ -125,7 +86,7 @@ def start(test_prod, ref_prod, path, cells='global', anomaly=False):
     
     workfolder = create_workfolder(path)
        
-    log_file = Log(workfolder, test_prod, ref_prod, anomaly, cells)
+    log_file = save_Log(workfolder, test_prod, ref_prod, anomaly, cells)
     
     for breaktime, timeframe in zip(breaktimes, timeframes):
 
@@ -143,7 +104,7 @@ def start(test_prod, ref_prod, path, cells='global', anomaly=False):
                           % (datetime.now().strftime('%Y-%m-%d%H:%M:%S'), timeframe, breaktime))
                         
         for iteration, gpi in enumerate(grid_points):
-            if iteration % 100 == 0:
+            if iteration % 1000 == 0:
                 print 'Processing QDEG Point %i (iteration %i of %i)' % (gpi, iteration, len(grid_points))
             
             if test_obj.ref_prod == 'ISMN-merge':               
@@ -193,37 +154,8 @@ def start(test_prod, ref_prod, path, cells='global', anomaly=False):
     save_obj.add_log_line('Created Plot for Longest Homogeneous Period')  
     '''
 
+if __name__ == '__main__':
+    # Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
+    # Testproduct of form cci_*version*_*product*
 
-# Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
-'''
-start('cci_31','ISMN-merge',
-      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
-      r'H:\workspace\HomogeneityTesting\output',anomaly=True))  
-'''      
-start('cci_33_combined', 'merra2', r'H:\workspace\HomogeneityTesting\output', cells='global', anomaly=False)
-'''
-
-start('cci_31_passive','merra2',
-      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
-      r'H:\workspace\HomogeneityTesting\output',anomaly=True)) 
-      
-start('cci_31_passive','merra2',
-      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
-      r'H:\workspace\HomogeneityTesting\output',anomaly=True)) 
-      
-start('cci_31','merra2',
-      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
-      r'H:\workspace\HomogeneityTesting\output',anomaly=True)                          
-
-start('cci_22','ISMN-merge',
-      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
-      r'H:\workspace\HomogeneityTesting\output',anomaly=True))    
-
-start('cci_31','gldas-merged-from-file',
-      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
-      r'H:\workspace\HomogeneityTesting\output',anomaly=True))    
-      
-start('cci_22','gldas-merged-from-file',
-      r"H:\workspace\HomogeneityTesting\csv\pointlist_global_quarter.csv",
-      r'H:\workspace\HomogeneityTesting\output',anomaly=True))    
-'''
+    start('cci_31_passive', 'merra2', r'H:\workspace\HomogeneityTesting\output', cells='global', skip_times=[0,1], anomaly=False)

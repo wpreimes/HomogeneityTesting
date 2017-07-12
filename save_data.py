@@ -7,6 +7,42 @@ Created on Mon Jun 19 13:28:09 2017
 import pandas as pd
 import numpy as np
 from points_to_netcdf import points_to_netcdf
+import os
+
+class save_Log(object):
+    def __init__(self, workfolder, test_prod, ref_prod, anomaly, cells):
+        # type: (str, str, str, bool, list) -> None
+        self.workfolder = workfolder
+
+        with open(os.path.join(workfolder, 'log.txt'), 'w') as f:
+            f.write('Log file for HomogeneityTesting \n')
+            f.write('=====================================\n')
+            f.write('Test Product: %s \n' % test_prod)
+            f.write('Reference Product: %s \n' % ref_prod)
+            f.write('Anomaly data: %s \n' % str(anomaly))
+            f.write('Processed Cells: %s \n' % cells)
+            f.write('=====================================\n')
+            f.write('\n')
+
+    def add_line(self, string):
+        # type: (str) -> None
+        # Initialize and add line to log file for current process
+        with open(os.path.join(self.workfolder, 'log.txt'), 'a') as f:
+            f.write(string + '\n')
+
+class load_Log(object):
+    def __init__(self, workfolder):
+        self.workfolder = workfolder
+
+    def get_products(self):
+        with open(os.path.join(self.workfolder,'log.txt'), mode='r') as f:
+            lines = [line.rstrip('\n') for line in f]
+
+        test_prod = lines[2].split(' ')[2]
+        ref_prod = lines[3].split(' ')[2]
+
+        return {'test_prod': test_prod, 'ref_prod': ref_prod}
+
 
 
 class SaveResults(object):
@@ -69,15 +105,15 @@ class SaveResults(object):
             'status': {
                 'Description': 'Homogeneity Testing Status',
                 'Values': '0 = Processing OK, \
-                                             1 = Error during WK testing,\
-                                             2 = Error during FK testing,\
-                                             3 = No coinciding data for the selected timeframe,\
-                                             4 = Test timeseries and reference timeseries do not match,\
-                                             5 = Spearman correlation failed,\
-                                             6 = Minimum Dataseries Length not reached,\
-                                             7 = Negative or NaN correlation,\
-                                             8 = WK test and FK test failed,\
-                                             9 = Error reading gpi'
+                         1 = Error during WK testing,\
+                         2 = Error during FK testing,\
+                         3 = No coinciding data for timeframe,\
+                         4 = Test TS and Ref TS do not match,\
+                         5 = Spearman correlation failed,\
+                         6 = Minimum Dataseries Length not reached,\
+                         7 = Negative or NaN correlation,\
+                         8 = WK test and FK test failed,\
+                         9 = Error reading gpi'
             }
         }
         df = pd.DataFrame.from_dict(self.data)
