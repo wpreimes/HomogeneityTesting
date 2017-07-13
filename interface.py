@@ -16,7 +16,7 @@ import scipy.io as io
 
 from general.time_series.anomaly import calc_anomaly
 
-from HomogeneityTesting.otherfunctions import regress, datetime2matlabdn
+from HomogeneityTesting.otherfunctions import regress, datetime2matlabdn, cci_timeframes
 from HomogeneityTesting.import_satellite_data import QDEGdata_M, QDEGdata_D
 from HomogeneityTesting.import_ismn_data import ISMNdataUSA
 
@@ -51,6 +51,24 @@ class HomogTest(object):
             self.data = QDEGdata_M(products=[self.ref_prod, self.test_prod])
 
         self.valid_range = self._init_validate_cci_range()
+
+    def _init_validate_cci_range(self):
+        # type: (None) -> list
+        valid_ranges = cci_timeframes(self.test_prod)['ranges']
+        '''
+        cci_re = {name: re.compile("%s.+" % name) for name in valid_ranges.keys()}
+        if not any([cci_re[version].match(self.test_prod) for version, x in cci_re.iteritems()]):
+            raise Exception('Unknown Test Product')
+        else:
+        '''
+        prefix, version, type = self.test_prod.split('_')
+        name = prefix + '_' + version
+
+        for time in self.timeframe:
+            if not valid_ranges[0] <= time.strftime('%Y-%m-%d') <= valid_ranges[1]:
+                raise Exception('Selected Timeframe is not valid for product %s' % self.test_prod)
+            else:
+                return valid_ranges
 
     @staticmethod
     def wk_test(dataframe, alternative='two-sided'):
@@ -143,27 +161,6 @@ class HomogTest(object):
     def vn_test():
         #TODO: implement von Neumann test
         pass
-    
-    def _init_validate_cci_range(self):
-        # type: (None) -> list
-        valid_ranges = {'cci_22': ['1980-01-01', '2014-12-31'],
-                        'cci_31': ['1980-01-01', '2015-12-31'],
-                        'cci_32': ['1980-01-01', '2015-12-31'],
-                        'cci_33': ['1980-01-01', '2016-12-31']}
-
-        cci_re = {name: re.compile("%s.+" % name) for name in valid_ranges.keys()}
-
-        if not any([cci_re[version].match(self.test_prod) for version, x in cci_re.iteritems()]):
-            raise Exception('Unknown Test Product')
-        else:
-            prefix, version, type = self.test_prod.split('_')
-            name = prefix + '_' + version
-
-        for time in self.timeframe:
-            if not valid_ranges[name][0] <= time.strftime('%Y-%m-%d') <= valid_ranges[name][1]:
-                raise Exception('Selected Timeframe is not valid for product %s' % self.test_prod)
-            else:
-                return valid_ranges[name]
 
     def read_gpi(self, gpi):
         # type: (int) -> pd.DataFrame
@@ -223,11 +220,11 @@ class HomogTest(object):
 
         # Check if any data is left for testdata and reference data
         if df_time.isnull().all().refdata or df_time.isnull().all().testdata:
-            raise Exception('3: No coinciding data for the selected timeframe')
+            raise Exception('1: No coinciding data for the selected timeframe')
 
         # Check if lengths of remaining datasets equal
         if df_time['refdata'].index.size != df_time['testdata'].index.size:
-            raise Exception('4: Test timeseries and reference timeseries do not match')
+            raise Exception('2: Test timeseries and reference timeseries do not match')
 
         # TODO: Check if Dataseries coincide in time
 
@@ -236,7 +233,7 @@ class HomogTest(object):
 
         # Check the rank correlation so that correlation is positive and significant at 0.05
         if not (corr > 0 and pval < 0.01):
-            raise Exception('5: Spearman correlation failed with correlation %f \ '
+            raise Exception('3: Spearman correlation failed with correlation %f \ '
                             '(must be >0)and pval %f (must be <0.01)' % (corr, pval))
 
         # Relative Test
@@ -255,13 +252,13 @@ class HomogTest(object):
 
         # Check if group data sizes are above selected minimum size
         if ni1 < min_data_size or ni2 < min_data_size:
-            raise Exception('6: Minimum Dataseries Length not reached. Size is %i and/or %i !> %i'
+            raise Exception('4: Minimum Dataseries Length not reached. Size is %i and/or %i !> %i'
                             % (ni1, ni2, min_data_size))
 
         df_time['bias_corr_refdata'], rxy, pval, ress = regress(df_time)
 
         if any(np.isnan(ress)):
-            raise Exception('7: Negative or NaN correlation')
+            raise Exception('5: Negative or NaN correlation')
 
         # Calculate difference TimeSeries
         df_time['Q'] = df_time.testdata - df_time.bias_corr_refdata
@@ -294,7 +291,7 @@ class HomogTest(object):
             fligner_killeen = {'h': 'FK not selected'}
 
         if type(wilkoxon['h']) is str and type(fligner_killeen['h'] is str):
-            raise Exception('8: WK test and FK test failed')
+            raise Exception('6: WK test and FK test failed')
 
         return df_time, {'wilkoxon': wilkoxon, 'fligner_killeen': fligner_killeen}
 

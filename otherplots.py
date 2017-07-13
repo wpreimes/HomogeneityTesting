@@ -16,7 +16,8 @@ from mpl_toolkits.basemap import Basemap
 
 from HomogeneityTesting.import_satellite_data import QDEGdata_M
 from HomogeneityTesting.points_to_netcdf import globalCellgrid, points_to_netcdf
-from HomogeneityTesting.otherfunctions import regress, calc_longest_homogeneous_period
+from HomogeneityTesting.otherfunctions import regress
+from HomogeneityTesting.longest_homogeneous_period import calc_longest_homogeneous_period
 from HomogeneityTesting.save_data import load_Log
 from HomogeneityTesting.nlcmap import nlcmap
 
@@ -28,7 +29,7 @@ from points_to_netcdf import pd_from_2Dnetcdf
 from netCDF4 import Dataset
 
 def inhomo_plot_with_stats(workdir):
-    # type: (str) -> None
+    # type: (str) -> str
     '''
     :param workdir: path to directory containing nc files from HomogeneityTesting
     :return: None
@@ -39,7 +40,7 @@ def inhomo_plot_with_stats(workdir):
     land_points = landgrid.get_grid_points()[0]
 
     for filename in fileslist:
-        DF_Points = pd_from_2Dnetcdf(filename, return_only_landpoints=False)
+        DF_Points = pd_from_2Dnetcdf(filename, grid='global')
 
         filename = filename.replace(workdir, '')
         filename = filename.replace('.', '_')
@@ -92,8 +93,8 @@ def inhomo_plot_with_stats(workdir):
         lons, lats = np.meshgrid(np.unique(DF_Points['lon'].values),
                                  np.unique(DF_Points['lat'].values))
 
-        im = m.pcolormesh(lons, np.flipud(lats), img_masked, cmap=cmap, latlon=True)
-
+        im = m.pcolormesh(lons, lats, img_masked, cmap=cmap, latlon=True)
+        # oder np.flipud(lats)
         im.set_clim(vmin=1, vmax=4)
 
         cb = m.colorbar(im, "bottom", size="5%", pad="8%")
@@ -116,6 +117,7 @@ def inhomo_plot_with_stats(workdir):
         filename = 'HomogeneityTest_%s_(breaktime-%s)' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
         plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
 
+    return workdir
 
 '''
 def compare_RTM_RTG(workdir, model_prod):
@@ -215,7 +217,7 @@ def show_tested_gpis(workdir):
     test_prod = products['test_prod']
 
     for filename in fileslist:
-        DF_Points = pd_from_2Dnetcdf(filename, return_only_landpoints=False)
+        DF_Points = pd_from_2Dnetcdf(filename, grid='global')
 
         status_var = Dataset(filename).variables['status']
 
@@ -225,7 +227,7 @@ def show_tested_gpis(workdir):
         breaktime = datetime.strptime(splitname[2], '%Y-%m-%d')
 
         colors = ["#2ecc71", "#9b59b6", "#3498db", "#95a5a6", "#e74c3c",
-                  "#34495e", "#FFC200", "#FFC0CB", "#FF1493", "#ffffff"]
+                  "#34495e", "#FFC200", "#FFC0CB", "#FF1493", "#FFFF00"]
 
         N = len(colors)
         cmap = LinearSegmentedColormap.from_list('status',
@@ -241,7 +243,7 @@ def show_tested_gpis(workdir):
 
         f = plt.figure(num=None, figsize=(20, 10), dpi=90, facecolor='w', edgecolor='k')
 
-        m = Basemap(projection='mill', llcrnrlat=-60, urcrnrlat=80, \
+        m = Basemap(projection='mill', llcrnrlat=-60, urcrnrlat=80,
                     llcrnrlon=-180, urcrnrlon=180, resolution='c', )
 
         m.drawcoastlines()
@@ -250,7 +252,8 @@ def show_tested_gpis(workdir):
         lons, lats = np.meshgrid(np.unique(DF_Points['lon'].values),
                                  np.unique(DF_Points['lat'].values))
 
-        im = m.pcolormesh(lons, np.flipud(lats), img_masked, cmap=cmap, latlon=True)
+        im = m.pcolormesh(lons, lats, img_masked, cmap=cmap, latlon=True)
+        #TODO: or np.flipud(lats) ?????
 
         im.set_clim(vmin=0, vmax=N)
 
@@ -261,7 +264,7 @@ def show_tested_gpis(workdir):
         for t in cb.ax.get_xticklabels():
             t.set_fontsize(20)
 
-        cb.set_label('Break detected by Test:', fontsize=20, labelpad=-50)
+        cb.set_label('Error occurred during:', fontsize=20, labelpad=-50)
 
         for j in range(N):
             cb.ax.text((float(j)/float(N)) + float(1./float(N*2)), .5, str(j), fontsize=15, ha='center', va='center')
@@ -292,8 +295,7 @@ def show_tested_gpis(workdir):
         filename = 'RT_coverage_%s_%s' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
         plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
 
-
-
+    return workdir
 '''
 def longest_homog_period_plots(workdir, create_start_year_plot=True, create_end_year_plot=True):
     
@@ -370,174 +372,7 @@ def longest_homog_period_plots(workdir, create_start_year_plot=True, create_end_
     filename = 'RTM_LongestHomogeneousePeriod_%s' % (ref_prod)
     plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
 '''
-
-def calc_longest_homogeneous_period(workdir, test_prod, ref_prod, same_colorbar=False):
-    # TODO: This function is bad...
-    fileslist = glob.glob(os.path.join(workdir, "DF_Points_%s*.csv" % ref_prod))
-    starttimes = []
-    endtimes = []
-    breaktimes = []
-    periodsizes = []
-    for filename in fileslist:
-        filename = filename.replace(workdir, '')
-        filename = filename.replace('.', '_')
-        splitname = filename.split('_')
-        starttimes.append(datetime.strptime(splitname[3], '%Y-%m-%d'))
-        endtimes.append(datetime.strptime(splitname[5], '%Y-%m-%d'))
-        breaktimes.append(datetime.strptime(splitname[4], '%Y-%m-%d'))
-
-    DF_Period = pd.concat([pd.read_csv(f, index_col=0, usecols=[0, 6], header=0,
-                                       names=['gpi_quarter', breaktimes[i]]) for i, f in enumerate(fileslist)], axis=1)
-
-    i = 1
-    for starttime, breaktime, endtime in zip(starttimes, breaktimes, endtimes):
-        # DF_Period['%i.1'%i] = np.where(DF_Period[breaktime]==4.,(endtime-starttime).days, ((breaktime-starttime).days),(endtime-breaktime).days))
-        DF_Period['%i' % i] = (breaktime - starttime).days
-        periodsizes.append((breaktime - starttime).days)
-        # DF_Period['%i.2'%i] = (endtime-breaktime).days
-        i += 1
-    DF_Period['%i' % i] = (endtimes[-1] - breaktimes[-1]).days
-    periods = map(list, DF_Period[DF_Period.columns.values[-i:]].values)
-    calcs = map(list, DF_Period[breaktimes].values)
-    results = []
-
-    for values, ops in zip(periods, calcs):
-        ops.append([4.0, np.nan])
-        r = []
-        while ops:
-            if ops[0] != 4.0:
-                r.append(values[0])
-                del values[0]
-                del ops[0]
-
-            elif ops[0] == 4.0:
-                values[1] += values[0]
-                del ops[0]
-                del values[0]
-        # r.append(values[-1])
-        results.append(r)
-
-    max_period = []
-    startdays = []
-
-    for periods in results:
-        if max(periods) in periodsizes:
-            max_period.append(np.nan)
-            startdays.append(np.nan)
-
-        else:
-            pos = periods.index(max(periods))
-            max_period.append(periods[pos])
-            startdays.append(sum(periods[:pos]))
-
-    first_date = starttimes[0]
-    startdates = []
-    startyears = []
-    enddates = []
-    endyears = []
-    for start, maxperiod in zip(startdays, max_period):
-        if np.isnan(start) or np.isnan(maxperiod):
-            startdates.append(np.nan)
-            enddates.append(np.nan)
-            startyears.append(np.nan)
-            endyears.append(np.nan)
-        else:
-            startdate = first_date + timedelta(days=int(start))
-            enddate = startdate + timedelta(days=int(maxperiod))
-            startdates.append(startdate)
-            enddates.append(enddate)
-            startyears.append(startdate.year)
-            endyears.append(enddate.year)
-
-    startdates = np.asarray(startdates)
-    enddates = np.asarray(enddates)
-    max_period = np.asarray(max_period) / 365.
-    DF_Period['max_Period'] = max_period
-    DF_Period['startdate'] = startdates
-    DF_Period['endate'] = enddates
-    DF_Period['startyear'] = startyears
-    DF_Period['endyear'] = endyears
-
-    points_to_netcdf(DF_Period[['endyear']], workdir, None, 'startendyears', None, None)
-    points_to_netcdf(DF_Period[['startyear']], workdir, None, 'startendyears', None, None)
-    lons = (np.arange(360 * 4) * 0.25) - 179.875
-    lats = (np.arange(180 * 4) * 0.25) - 89.875
-    lons, lats = np.meshgrid(lons, lats)
-
-    cmap = plt.cm.jet
-
-    '''
-    if test_prod=='cci_22':
-        cbrange=(8,21)
-    elif test_prod=='cci_31':
-        cbrange=(6,20)
-    '''
-
-    if (test_prod[:6] == 'cci_31') or (same_colorbar == True):
-        levels = [8, 11.5, 15.5, 21]
-        cmaplist = [(0.5, 0, 0, 1), (0.7, 0, 0, 1), (1, 0.2, 0.2, 1), (1, 0.2, 0.2, 1),
-                    # (0.3,0.3,0.3,1),(0.5,0.5,0.5,1),(0.5,0.5,0.5,1),
-                    (0, 0.7, 0.7, 1),
-                    (0, 0.6, 0.7, 1), (0, 0.6, 0.7, 1), (0, 0.3, 1, 1), (0, 0, 0.5, 1), (0, 0, 0.5, 1), (0, 0, 0.5, 1)]
-        # cmaplist=[(0.5,0,0,1),(0.7,0,0,1),(1,0.2,0.2,1),(1,0.2,0.2,1),
-        # (0,0.7,0.7,1),(0,0.7,0.7,1),
-        # (0,0.6,0.7,1),(0,0.3,1,1),(0,0,0.8,1),(0,0,0.8,1),(0,0,0.5,1)]
-    elif test_prod[:6] == 'cci_22':
-        cmaplist = [(0.5, 0, 0, 1), (0.7, 0, 0, 1), (1, 0.2, 0.2, 1), (1, 0.2, 0.2, 1),
-                    # (0.3,0.3,0.3,1),(0.5,0.5,0.5,1),(0.5,0.5,0.5,1),
-                    (0, 0.7, 0.7, 1),
-                    (0, 0.6, 0.7, 1), (0, 0.6, 0.7, 1), (0, 0.6, 0.7, 1), (0, 0.3, 1, 1), (0, 0, 0.8, 1),
-                    (0, 0, 0.8, 1), (0, 0, 0.5, 1), (0, 0, 0.5, 1), (0, 0, 0.5, 1)]
-        levels = [8, 10, 15.5, 21, 24]
-
-    cmap = cmap.from_list('LongestPeriodCMap', cmaplist, cmap.N)
-    # cmap_nonlin = nlcmap(cmap, levels)
-    # cmaplist = [cmap(i) for i in range(cmap.N)]
-
-
-    img = np.empty(lons.size, dtype='float32')
-    img.fill(np.nan)
-    img[DF_Period.index.values] = DF_Period['max_Period'].values
-
-    # mask array where invalid values (nans) occur
-    img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
-
-    f = plt.figure(num=None, figsize=(20, 10), dpi=90, facecolor='w', edgecolor='k')
-
-    m = Basemap(projection='mill', llcrnrlat=-60, urcrnrlat=80, \
-                llcrnrlon=-180, urcrnrlon=180, resolution='c', )
-
-    m.drawcoastlines()
-    m.drawcountries()
-
-    im = m.pcolormesh(lons, lats, img_masked, cmap=cmap, latlon=True)
-
-    im.set_clim(vmin=levels[0], vmax=levels[-1])
-
-    sm = plt.cm.ScalarMappable(cmap=cmap,
-                               norm=plt.Normalize(vmin=levels[0], vmax=levels[-1]))
-    sm._A = []
-    cb = m.colorbar(sm, "bottom", size="5%", pad="8%")
-    # cb.outline.set_visible(False)
-    # cb.set_ticks(cmap_nonlin.transformed_levels)
-
-    cb.set_ticklabels(["%.1f" % lev for lev in levels])
-    for t in cb.ax.get_xticklabels():
-        t.set_fontsize(20)
-
-    cb.set_label('Period Length [years]:', fontsize=20, labelpad=-75)
-
-    title = 'Length of Longest Homogeneous Period\n %s|%s' % ('CCI', ref_prod)
-    plt.title(title, fontsize=20)
-
-    # plt.annotate(textbox, fontsize=15,xy=(0.025, 0.05), xycoords='axes fraction',bbox={'facecolor':'grey', 'alpha':0.5, 'pad':3})
-
-    filename = 'RTM_LongestHomogeneousePeriod_%s' % (ref_prod)
-    plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
-
 '''
-
-
 def extreme_break(workdir, ref_prod, test_prod):
     gpis = [363662, 406520, 564947, 391490]
     for gpi in gpis:

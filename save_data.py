@@ -61,7 +61,7 @@ class SaveResults(object):
     def extract_infos(self, data_dict):
         # type: (dict) -> dict
         status = int(data_dict['status'][0])
-        if status in range(3, 10):
+        if status not in [0, 6, 7]:
             return {'h_wk': np.nan, 'h_fk': np.nan, 'test_results': np.nan, 'status': status}
         else:
             wk = data_dict['wilkoxon']['h']
@@ -70,11 +70,11 @@ class SaveResults(object):
             if type(wk) is str:
                 # wk test failed and contains error message
                 wk = np.nan
-                status = 1
+                status = 6 # This is just an identification number, no math meaning
             if type(fk) is str:
                 # fk failed and contains error message
                 fk = np.nan
-                status = 2
+                status = 7 # This is just an identification number, no math meaning
 
             all = 4.0
             if wk == 1:
@@ -104,18 +104,12 @@ class SaveResults(object):
                 'Values': '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None'},
             'status': {
                 'Description': 'Homogeneity Testing Status',
-                'Values': '0 = Processing OK, \
-                         1 = Error during WK testing,\
-                         2 = Error during FK testing,\
-                         3 = No coinciding data for timeframe,\
-                         4 = Test TS and Ref TS do not match,\
-                         5 = Spearman correlation failed,\
-                         6 = Minimum Dataseries Length not reached,\
-                         7 = Negative or NaN correlation,\
-                         8 = WK test and FK test failed,\
-                         9 = Error reading gpi'
-            }
-        }
+                'Values':
+    '0 = Processing OK, 1 = No coinciding data for timeframe, 2 = Test TS and Ref TS do not match,\
+    3 = Spearman correlation failed, 4 = Minimum Dataseries Length not reached, 5 = Negative or NaN correlation,\
+    6 = Error during WK testing, 7 = Error during FK testing, 8 = WK test and FK test failed, 9 = Error reading gpi'
+                        }
+                        }
         df = pd.DataFrame.from_dict(self.data)
         df = df.set_index('gpi')
 

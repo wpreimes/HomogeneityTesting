@@ -13,15 +13,13 @@ from typing import Union
 import os
 from datetime import datetime
 from pygeogrids.netcdf import load_grid
-import ast
-import numpy as np
 
 from HomogeneityTesting.interface import HomogTest
 from HomogeneityTesting.otherfunctions import cci_timeframes
 from HomogeneityTesting.save_data import SaveResults, save_Log
-
-
-
+from HomogeneityTesting.grid_functions import grid_points_for_cells
+from HomogeneityTesting.otherplots import show_tested_gpis, inhomo_plot_with_stats
+from HomogeneityTesting.longest_homogeneous_period import calc_longest_homogeneous_period
 '''
 Breaktimes sind Punkte an denen Inhomogenitäten vermutet werden
 Laut Processing overview und Research letter:
@@ -30,29 +28,6 @@ Laut Processing overview und Research letter:
 
 used alpha in research letter:0.01
 '''
-
-
-
-
-def cells_for_continent(continent):
-    # type: (str) -> dict
-    # continents in file: "Australia", "North_America"
-    with open(r"H:\continents_cells.txt", 'r') as f:
-        s = f.read()
-        return ast.literal_eval(s)[continent]
-
-
-def grid_points_for_cells(grid, cells):
-
-    if type(cells) == str:
-        cells = cells_for_continent(cells)
-        
-    if type(cells) == list:
-        grid_points = []
-        for cell in cells:
-            grid_points+=np.ndarray.tolist(grid.grid_points_for_cell(cell)[0])
-        return grid_points
-
 
 def create_workfolder(path):
     # type: (str) -> str
@@ -68,7 +43,7 @@ def create_workfolder(path):
     return workfolder       
 
 
-def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=False):
+def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=False, adjusted_ts_path=None):
     # type: (str, str, str, Union[list,str], Union[list,None], bool) -> None
 
     testtimes = cci_timeframes(test_prod, skip_times=skip_times)
@@ -128,34 +103,35 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
                 # The last group of grid points is saved to file, also if the buffer size is not yet reached
                 save_obj.save_to_netcdf()
 
-            '''    
-            if test_obj.adjust:
-                    adj_settings, ts_corrected= test_obj.adjust_TS(df_time,
-                                                                   testresult['Wilkoxon']['h'],
-                                                                   testresult['FlignerKilleen']['h'])
-                                                                   
-                    ts_to_netcdf(ts_corrected,gpi,test_obj.)
-            '''
         # Add Info to log file
         log_file.add_line('%s: Finished testing for timeframe %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
                                                                      timeframe))
 
         log_file.add_line('Saved results to: HomogeneityTest_%s.csv' % breaktime)
-    '''        
-    #Plotting
-    show_tested_gpis(test_obj.workpath,test_obj.ref_prod)
-    inhomo_plot_with_stats(test_obj.workpath)
-    
-    save_obj.add_log_line('Created plots for Homogeneity Testing results and Tested GPIs')
-    
-    
-    save_obj.add_log_line('=====================================')
-    calc_longest_homogeneous_period(test_obj.workpath,test_obj.test_prod,test_obj.ref_prod)   
-    save_obj.add_log_line('Created Plot for Longest Homogeneous Period')  
-    '''
+
+    log_file.add_line('=====================================')
+    #Plotting and netcdf files
+    ncfilename = calc_longest_homogeneous_period(workfolder, create_netcdf=True)
+    log_file.add_line('%s: Saved longest homogeneouse Period, startdate and enddate to %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+                                                                                              ncfilename))
+    dir = show_tested_gpis(workfolder)
+    log_file.add_line('%s: Create coverage plots in %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+                                                           dir))
+    dir = inhomo_plot_with_stats(workfolder)
+    log_file.add_line('%s: Create nice Test Results plots with stats in %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+                                                                               dir))
+    log_file.add_line('=====================================')
+    if adjusted_ts_path:
+        log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d%H:%M:%S')))
+        pass
+        #Do TS adjsutement and save resutls to path
+
 
 if __name__ == '__main__':
     # Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
     # Testproduct of form cci_*version*_*product*
-
-    start('cci_31_passive', 'merra2', r'H:\workspace\HomogeneityTesting\output', cells='global', skip_times=[0,1], anomaly=False)
+    start('cci_31_combined',
+          'merra2',
+          r'H:\workspace\HomogeneityTesting\output',
+          cells=[602], skip_times=None, anomaly=False,
+          adjusted_ts_path=None)

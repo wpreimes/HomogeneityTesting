@@ -11,7 +11,7 @@ from __future__ import print_function
 import pygeogrids.netcdf as nc
 from pygeogrids.grids import BasicGrid
 import os
-import glob
+
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -62,34 +62,6 @@ def create_cellfile_name(gpi, grid):
     return cell, file_pattern
 
 
-def csv_to_netcdf(workdir):
-    # type: (str) -> None
-    '''
-    Turns csv file from old version of homogneity testing into netcdf file
-    :param workdir:
-    :return: None
-    '''
-    fileslist = glob.glob(os.path.join(workdir, "DF_Points_merra2*"))
-
-
-    for filename in fileslist:
-        DF_Points = pd.read_csv(filename, index_col=0)
-
-        filename = filename.replace(workdir, '')
-        filename = filename.replace('.', '_')
-        splitname = filename.split('_')
-        breaktime = splitname[4]
-
-        if 'h_all' in DF_Points.columns.values:
-            DF_Points = DF_Points.rename(columns={'h_all': 'test_results'})
-        if 'h_WK' in DF_Points.columns.values:
-            DF_Points = DF_Points.rename(columns={'h_WK': 'h_wk'})
-        if 'h_FK' in DF_Points.columns.values:
-            DF_Points = DF_Points.rename(columns={'h_FK': 'h_fk'})
-
-        points_to_netcdf(dataframe=DF_Points[['test_results', 'h_wk', 'h_fk']], path=workdir, filename="HomogeneityTest_merra2_%s" % breaktime)
-
-
 def pd_from_2Dnetcdf(filename, grid='global'):
     # type: (str, str) -> pd.DataFrame
     '''
@@ -97,16 +69,15 @@ def pd_from_2Dnetcdf(filename, grid='global'):
     :param grid: Set "global" (global grid points) or "land" (only land points) to return specific points
     :return: Dataframe with GPIs as index and data from netcdf in columns
     '''
-
+    # TODO: Delete this function when everything runs
     ncfile = Dataset(filename)
-
 
     lons_file = ncfile.variables['lon'][:]
     # lats in same order as glob grid ascending
     lats_file = np.flipud(ncfile.variables['lat'][:])
 
 
-    #global grid
+    #global grid how it is in netcdf file
     lons_file, lats_file = np.meshgrid(lons_file, lats_file)
 
     var_names = []
@@ -115,7 +86,9 @@ def pd_from_2Dnetcdf(filename, grid='global'):
             var_names.append(var_name)
 
     # data in same order as glob grid ascending
+
     data = {name: np.flipud(ncfile.variables[name][:]) for name in var_names}
+
     data['lon'] = lons_file
     data['lat'] = lats_file
 
@@ -127,71 +100,16 @@ def pd_from_2Dnetcdf(filename, grid='global'):
 
     if grid == 'global':
         thegrid = globalCellgrid()
-    if grid == 'land':
+    elif grid == 'land':
         thegrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
+    else:
+        raise Exception("select 'land' or 'global' for returned GPIs")
 
     grid_points = thegrid.get_grid_points()[0]
 
     return dataframe.loc[grid_points]
 
 
-
-    '''
-    ###stupid shit
-    data = {}
-    for var_name in ncfile.variables:
-        var = ncfile.variables[var_name]
-        if var.dimensions == ('lat', 'lon'):
-            if var.dtype == 'int64':
-                # Status is int
-                # TODO: This can be removed if new version of pd_to_netcdf is active
-                d = var[:]
-                d = d.astype(float)
-                d[np.where(d == -9223372036854775808.)] = np.nan
-                data.update({var.name: d})
-            else:
-                data.update({var.name: var[:]})
-
-    if not (lons.size == lons_file.size and all(np.equal(lons, lons_file))):
-        for i, lon in enumerate(lons):
-            if lon not in lons_file:
-                lons_file = np.insert(lons_file, i, lon)
-                for var_name in data.keys():
-                    data[var_name] = np.insert(data[var_name], i, np.nan, axis=1)
-
-    if not (lats.size == lats_file.size and all(np.equal(lats, lats_file))):
-        for i, lat in enumerate(lats):
-            if lat not in lats_file:
-                lats_file = np.insert(lats_file, i, lat)
-                for var_name in data.keys():
-                    data[var_name] = np.insert(data[var_name], i, np.nan, axis=0)  #np.full(lons.size, np.nan)
-
-    if not (all(np.equal(lats, lats_file)) and all(np.equal(lons, lons_file))):
-        raise Exception('Lat Lon not equal')
-
-    lons, lats = np.meshgrid(lons, lats)
-    data_flatten = {na: da.flatten() for na, da in data.iteritems()}
-    data_flatten.update({'lon': lons.flatten(), 'lat': lats.flatten()})
-
-    ncfile.close()
-    dataframe = pd.DataFrame(data=data_flatten)
-
-    if size == 'landgrid':
-        grid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
-        grid_points = grid.get_grid_points()[0]
-        #dataframe = dataframe.loc[np.isnan(dataframe['status']) == False]
-        return dataframe.loc[grid_points]
-    elif size == 'globgrid':
-        grid = globalCellgrid()
-        grid_points = grid.get_grid_points()[0]
-        return dataframe.loc[grid_points]
-    elif size == 'image':
-        return dataframe
-
-    else:
-        raise Exception('choose image, globgrid or landgrid to specify which points to return')
-
-    '''
 
 def update_loc_var(ncfile, data, name, grid, idx):
     if name in ncfile.variables.keys():
@@ -352,6 +270,6 @@ def points_to_netcdf(dataframe,
 
     ncfile.close()
 
-#csv_to_netcdf(r"H:\workspace\HomogeneityTesting\output\CCI31EGU")
+
 #dataframe = pd_from_2Dnetcdf(r"H:\workspace\HomogeneityTesting\output\CCI31EGU\HomogeneityTest_merra2_2007-10-01.nc", grid="global")
 #points_to_netcdf(dataframe[['test_results']],r'H:\workspace\HomogeneityTesting\output\CCI31EGU',None,'test',None,None)
