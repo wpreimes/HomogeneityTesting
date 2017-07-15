@@ -62,6 +62,7 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
     workfolder = create_workfolder(path)
        
     log_file = save_Log(workfolder, test_prod, ref_prod, anomaly, cells)
+    filenames = []
     
     for breaktime, timeframe in zip(breaktimes, timeframes):
 
@@ -73,6 +74,7 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
                              anomaly)
 
         filename = 'HomogeneityTest_%s_%s' % (test_obj.ref_prod, test_obj.breaktime.strftime("%Y-%m-%d"))
+        filenames.append(filename)
         save_obj = SaveResults(workfolder, grid, filename, buffer_size=300)
                             
         log_file.add_line('%s: Start Testing Timeframe and Breaktime: %s and %s'
@@ -111,20 +113,21 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
 
     log_file.add_line('=====================================')
     #Plotting and netcdf files
-    ncfilename = calc_longest_homogeneous_period(workfolder, create_netcdf=True)
-    log_file.add_line('%s: Saved longest homogeneouse Period, startdate and enddate to %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
-                                                                                              ncfilename))
-    dir = show_tested_gpis(workfolder)
-    log_file.add_line('%s: Create coverage plots in %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
-                                                           dir))
-    dir = inhomo_plot_with_stats(workfolder)
-    log_file.add_line('%s: Create nice Test Results plots with stats in %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
-                                                                               dir))
+    for i, filename in enumerate(filenames):
+        ncfilename = calc_longest_homogeneous_period(workfolder, create_netcdf=True)
+        log_file.add_line('%s: Saved longest homogeneouse Period, startdate and enddate to %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+                                                                                                  ncfilename))
+        meta = show_tested_gpis(workfolder, filename)
+        log_file.add_line('%s: Create coverage plots with groups %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+                                                                        str(meta)))
+        stats = inhomo_plot_with_stats(workfolder, filename)
+        log_file.add_line('%s: Create nice Test Results plot with stats for breaktime %s: %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+                                                                                                 str(i), str(stats)))
     log_file.add_line('=====================================')
     if adjusted_ts_path:
         log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d%H:%M:%S')))
         pass
-        #Do TS adjsutement and save resutls to path
+        #Do TS adjutement and save resutls to path
 
 
 if __name__ == '__main__':

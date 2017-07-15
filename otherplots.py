@@ -28,96 +28,94 @@ import pygeogrids.netcdf as nc
 from points_to_netcdf import pd_from_2Dnetcdf
 from netCDF4 import Dataset
 
-def inhomo_plot_with_stats(workdir):
+def inhomo_plot_with_stats(workdir, filename):
     # type: (str) -> str
     '''
     :param workdir: path to directory containing nc files from HomogeneityTesting
     :return: None
     '''
-    fileslist = glob.glob(os.path.join(workdir, "HomogeneityTest*.nc"))
-
     landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
     land_points = landgrid.get_grid_points()[0]
 
-    for filename in fileslist:
-        DF_Points = pd_from_2Dnetcdf(filename, grid='global')
+    DF_Points = pd_from_2Dnetcdf(filename, grid='global')
 
-        filename = filename.replace(workdir, '')
-        filename = filename.replace('.', '_')
-        splitname = filename.split('_')
+    splitname = filename.split('_') #0=HomogeneityTest, 1=RefData, 2=breaktime
 
-        log = load_Log(workdir)
-        products = log.get_products()
-        ref_prod = products['ref_prod']
+    log = load_Log(workdir)
+    products = log.get_products()
+    ref_prod = products['ref_prod']
+    if ref_prod != splitname[1]:
+        raise Exception('Reference Product from filename and log file not equal')
 
-        breaktime = datetime.strptime(splitname[2], '%Y-%m-%d')
+    breaktime = datetime.strptime(splitname[2], '%Y-%m-%d')
 
-        all_gpis = land_points.size
-        tested_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([1., 2., 3., 4.])].size
-        hwk_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([1., 3.])].size
-        hfk_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([2., 3.])].size
-        hboth_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([3.])].size
+    all_gpis = land_points.size
+    tested_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([1., 2., 3., 4.])].size
+    hwk_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([1., 3.])].size
+    hfk_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([2., 3.])].size
+    hboth_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([3.])].size
 
-        all_tested = (float(tested_gpis) / float(all_gpis)) * 100.
-        try:
-            wk_tested = (float(hwk_gpis) / float(tested_gpis)) * 100.
-            fk_tested = (float(hfk_gpis) / float(tested_gpis)) * 100.
-            both_tested = (float(hboth_gpis) / float(tested_gpis)) * 100.
-        except:
-            wk_tested, fk_tested, both_tested = 0, 0, 0
+    all_tested = (float(tested_gpis) / float(all_gpis)) * 100.
+    try:
+        wk_tested = (float(hwk_gpis) / float(tested_gpis)) * 100.
+        fk_tested = (float(hfk_gpis) / float(tested_gpis)) * 100.
+        both_tested = (float(hboth_gpis) / float(tested_gpis)) * 100.
+    except:
+        wk_tested, fk_tested, both_tested = 0, 0, 0
 
-        textbox = 'Ground Points Tested: %.2f%%\n' % all_tested + \
-                  'WK (of Tested): %.2f%%\n' % wk_tested + \
-                  'FK (of Tested): %.2f%%\n' % fk_tested + \
-                  'Both (of Tested): %.2f%%' % both_tested
+    textbox = 'Ground Points Tested: %.2f%%\n' % all_tested + \
+              'WK (of Tested): %.2f%%\n' % wk_tested + \
+              'FK (of Tested): %.2f%%\n' % fk_tested + \
+              'Both (of Tested): %.2f%%' % both_tested
 
-        colors = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (.5, .5, .5)]
-        cmap = LinearSegmentedColormap.from_list('HomogeneityGroups',
-                                                 colors,
-                                                 N=4)
+    colors = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (.5, .5, .5)]
+    cmap = LinearSegmentedColormap.from_list('HomogeneityGroups',
+                                             colors,
+                                             N=4)
 
-        img = np.empty(DF_Points['lon'].values.size, dtype='float32')
-        img.fill(np.nan)
-        img[DF_Points.index.values] = DF_Points['test_results'].values
+    img = np.empty(DF_Points['lon'].values.size, dtype='float32')
+    img.fill(np.nan)
+    img[DF_Points.index.values] = DF_Points['test_results'].values
 
-        # mask array where invalid values (nans) occur
-        img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
+    # mask array where invalid values (nans) occur
+    img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
 
-        f = plt.figure(num=None, figsize=(20, 10), dpi=90, facecolor='w', edgecolor='k')
+    f = plt.figure(num=None, figsize=(20, 10), dpi=90, facecolor='w', edgecolor='k')
 
-        m = Basemap(projection='mill', llcrnrlat=-60, urcrnrlat=80,
-                    llcrnrlon=-180, urcrnrlon=180, resolution='c', )
+    m = Basemap(projection='mill', llcrnrlat=-60, urcrnrlat=80,
+                llcrnrlon=-180, urcrnrlon=180, resolution='c', )
 
-        m.drawcoastlines()
-        m.drawcountries()
-        lons, lats = np.meshgrid(np.unique(DF_Points['lon'].values),
-                                 np.unique(DF_Points['lat'].values))
+    m.drawcoastlines()
+    m.drawcountries()
+    lons, lats = np.meshgrid(np.unique(DF_Points['lon'].values),
+                             np.unique(DF_Points['lat'].values))
 
-        im = m.pcolormesh(lons, lats, img_masked, cmap=cmap, latlon=True)
-        # oder np.flipud(lats)
-        im.set_clim(vmin=1, vmax=4)
+    im = m.pcolormesh(lons, lats, img_masked, cmap=cmap, latlon=True)
+    # oder np.flipud(lats)
+    im.set_clim(vmin=1, vmax=4)
 
-        cb = m.colorbar(im, "bottom", size="5%", pad="8%")
-        cb.outline.set_visible(False)
-        cb.set_ticks([])
+    cb = m.colorbar(im, "bottom", size="5%", pad="8%")
+    cb.outline.set_visible(False)
+    cb.set_ticks([])
 
-        for t in cb.ax.get_xticklabels():
-            t.set_fontsize(20)
+    for t in cb.ax.get_xticklabels():
+        t.set_fontsize(20)
 
-        cb.set_label('Break detected by Test:', fontsize=20, labelpad=-50)
-        for j, lab in enumerate(['Wilkoxon', 'Fligner-Killeen', 'Both', 'None']):
-            cb.ax.text((2 * j + 1) / 8.0, .5, lab, fontsize=15, ha='center', va='center')
+    cb.set_label('Break detected by Test:', fontsize=20, labelpad=-50)
+    for j, lab in enumerate(['Wilkoxon', 'Fligner-Killeen', 'Both', 'None']):
+        cb.ax.text((2 * j + 1) / 8.0, .5, lab, fontsize=15, ha='center', va='center')
 
-        title = 'HomogeneityTesting \n %s|%s|Breaktime:%s' % ('CCI', ref_prod, breaktime.strftime("%Y-%m-%d"))
-        plt.title(title, fontsize=20)
+    title = 'HomogeneityTesting \n %s|%s|Breaktime:%s' % ('CCI', ref_prod, breaktime.strftime("%Y-%m-%d"))
+    plt.title(title, fontsize=20)
 
-        plt.annotate(textbox, fontsize=15, xy=(0.025, 0.05), xycoords='axes fraction',
-                     bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
+    plt.annotate(textbox, fontsize=15, xy=(0.025, 0.05), xycoords='axes fraction',
+                 bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
-        filename = 'HomogeneityTest_%s_(breaktime-%s)' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
-        plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
+    filename = 'HomogeneityTest_%s_(breaktime-%s)' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
+    plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
 
-    return workdir
+    return {'tested_gps': all_tested, 'wk_of_tested' : wk_tested, 'fk_of_tested': fk_tested,
+            'both_of_tested': both_tested}
 
 '''
 def compare_RTM_RTG(workdir, model_prod):
@@ -201,13 +199,11 @@ def compare_RTM_RTG(workdir, model_prod):
 '''
 
 
-def show_tested_gpis(workdir):
+def show_tested_gpis(workdir, filename):
     '''
     Calculate spatial plots for the areas where Homogeneity Tests were (not)
     performed
     '''
-    fileslist = glob.glob(os.path.join(workdir, "HomogeneityTest*.nc"))
-
     landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
     land_points = landgrid.get_grid_points()[0]
 
@@ -216,86 +212,86 @@ def show_tested_gpis(workdir):
     ref_prod = products['ref_prod']
     test_prod = products['test_prod']
 
-    for filename in fileslist:
-        DF_Points = pd_from_2Dnetcdf(filename, grid='global')
+    DF_Points = pd_from_2Dnetcdf(os.path.join(workdir,filename), grid='global')
 
-        status_var = Dataset(filename).variables['status']
+    status_var = Dataset(os.path.join(workdir,filename)).variables['status']
 
-        filename = filename.replace(workdir, '')
-        filename = filename.replace('.', '_')
-        splitname = filename.split('_')
-        breaktime = datetime.strptime(splitname[2], '%Y-%m-%d')
+    splitname = filename.split('_')
+    if ref_prod != splitname[1]:
+        raise Exception('Reference Product from filename and log file not equal')
+    breaktime = datetime.strptime(splitname[2], '%Y-%m-%d')
 
-        colors = ["#2ecc71", "#9b59b6", "#3498db", "#95a5a6", "#e74c3c",
-                  "#34495e", "#FFC200", "#FFC0CB", "#FF1493", "#FFFF00"]
 
-        N = len(colors)
-        cmap = LinearSegmentedColormap.from_list('status',
-                                                 colors,
-                                                 N=N)
+    colors = ["#2ecc71", "#9b59b6", "#3498db", "#95a5a6", "#e74c3c",
+              "#34495e", "#FFC200", "#FFC0CB", "#FF1493", "#FFFF00"]
 
-        img = np.empty(DF_Points['lon'].values.size, dtype='float32')
-        img.fill(np.nan)
-        img[DF_Points.index.values] = DF_Points['status'].values
+    N = len(colors)
+    cmap = LinearSegmentedColormap.from_list('status',
+                                             colors,
+                                             N=N)
 
-        # mask array where invalid values (nans) occur
-        img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
+    img = np.empty(DF_Points['lon'].values.size, dtype='float32')
+    img.fill(np.nan)
+    img[DF_Points.index.values] = DF_Points['status'].values
 
-        f = plt.figure(num=None, figsize=(20, 10), dpi=90, facecolor='w', edgecolor='k')
+    # mask array where invalid values (nans) occur
+    img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
 
-        m = Basemap(projection='mill', llcrnrlat=-60, urcrnrlat=80,
-                    llcrnrlon=-180, urcrnrlon=180, resolution='c', )
+    f = plt.figure(num=None, figsize=(20, 10), dpi=90, facecolor='w', edgecolor='k')
 
-        m.drawcoastlines()
-        m.drawcountries()
+    m = Basemap(projection='mill', llcrnrlat=-60, urcrnrlat=80,
+                llcrnrlon=-180, urcrnrlon=180, resolution='c', )
 
-        lons, lats = np.meshgrid(np.unique(DF_Points['lon'].values),
-                                 np.unique(DF_Points['lat'].values))
+    m.drawcoastlines()
+    m.drawcountries()
 
-        im = m.pcolormesh(lons, lats, img_masked, cmap=cmap, latlon=True)
-        #TODO: or np.flipud(lats) ?????
+    lons, lats = np.meshgrid(np.unique(DF_Points['lon'].values),
+                             np.unique(DF_Points['lat'].values))
 
-        im.set_clim(vmin=0, vmax=N)
+    im = m.pcolormesh(lons, lats, img_masked, cmap=cmap, latlon=True)
+    #TODO: or np.flipud(lats) ?????
 
-        cb = m.colorbar(im, "bottom", size="5%", pad="8%")
-        cb.outline.set_visible(True)
-        cb.set_ticks([])
+    im.set_clim(vmin=0, vmax=N)
 
-        for t in cb.ax.get_xticklabels():
-            t.set_fontsize(20)
+    cb = m.colorbar(im, "bottom", size="5%", pad="8%")
+    cb.outline.set_visible(True)
+    cb.set_ticks([])
 
-        cb.set_label('Error occurred during:', fontsize=20, labelpad=-50)
+    for t in cb.ax.get_xticklabels():
+        t.set_fontsize(20)
 
-        for j in range(N):
-            cb.ax.text((float(j)/float(N)) + float(1./float(N*2)), .5, str(j), fontsize=15, ha='center', va='center')
+    cb.set_label('Error occurred during:', fontsize=20, labelpad=-50)
 
-        title = 'HomogeneityTesting Coverage \n %s|%s|%s' % (test_prod, ref_prod, breaktime.strftime("%Y-%m-%d"))
-        plt.title(title, fontsize=20)
+    for j in range(N):
+        cb.ax.text((float(j)/float(N)) + float(1./float(N*2)), .5, str(j), fontsize=15, ha='center', va='center')
 
-        stats = DF_Points['status'].dropna().values
-        all_gpis = float(land_points.size)
+    title = 'HomogeneityTesting Coverage \n %s|%s|%s' % (test_prod, ref_prod, breaktime.strftime("%Y-%m-%d"))
+    plt.title(title, fontsize=20)
 
-        # Grab the groups and their values from the meta data of the nc file
-        meta ={}
-        groups_string = status_var.Values
-        groups_strings = groups_string.split(',')
-        for string in groups_strings:
-            string = string.split('=')
-            meta.update({int(string[0]): string[1]})
+    stats = DF_Points['status'].dropna().values
+    all_gpis = float(land_points.size)
 
-        textbox = 'Total ground points: %i\n' % all_gpis
+    # Grab the groups and their values from the meta data of the nc file
+    meta ={}
+    groups_string = status_var.Values
+    groups_strings = groups_string.split(',')
+    for string in groups_strings:
+        string = string.split('=')
+        meta.update({int(string[0]): string[1]})
 
-        for val, s in meta.iteritems():
-            stat = float(stats[np.where(stats == float(val))].size / all_gpis) * 100.
-            textbox += str(val)+': ' + s + ': ' + '%.2f%%\n' % stat
+    textbox = 'Total ground points: %i\n' % all_gpis
 
-        plt.annotate(textbox, fontsize=10, xy=(0.025, 0.05), xycoords='axes fraction',
-                     bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
+    for val, s in meta.iteritems():
+        stat = float(stats[np.where(stats == float(val))].size / all_gpis) * 100.
+        textbox += str(val)+': ' + s + ': ' + '%.2f%%\n' % stat
 
-        filename = 'RT_coverage_%s_%s' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
-        plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
+    plt.annotate(textbox, fontsize=10, xy=(0.025, 0.05), xycoords='axes fraction',
+                 bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
-    return workdir
+    filename = 'RT_coverage_%s_%s' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
+    plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
+
+    return meta
 '''
 def longest_homog_period_plots(workdir, create_start_year_plot=True, create_end_year_plot=True):
     
