@@ -186,10 +186,6 @@ def cci_timeframes(product, skip_times=None):
     if skip_times:
         return_timeframes = np.array([return_timeframes[i] for i in range(return_timeframes.shape[0]) if i not in skip_times])
         return_breaktimes = np.array([return_breaktimes[i] for i in range(return_breaktimes.size) if i not in skip_times])
-        # mask = np.full(return_timeframes.size, 0)
-        # mask[skip_times] = 1
-        # return_timeframes = np.ma.array(data=return_timeframes, mask=mask)
-        # return_breaktimes = np.ma.array(data=return_breaktimes, mask=mask)
 
 
     return {'breaktimes': return_breaktimes, 'timeframes': return_timeframes, 'ranges': return_ranges}

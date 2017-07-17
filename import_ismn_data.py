@@ -32,7 +32,7 @@ class ISMNdataUSA(object):
         self.ISMN_reader = ismn.ISMN_Interface(self.path_ismn)
         networks = self.ISMN_reader.list_networks()
 
-        defaultfile = r'H:\workspace\HomogeneityTesting\output\ismn_files\USA_gpinetsta_%s_%s_%s.pkl' % (
+        defaultfile = r'H:\HomogeneityTesting_data\ismn_files\USA_gpinetsta_%s_%s_%s.pkl' % (
             timeframe[0].strftime('%Y-%m-%d'),
             breaktime.strftime('%Y-%m-%d'),
             timeframe[1].strftime('%Y-%m-%d'))

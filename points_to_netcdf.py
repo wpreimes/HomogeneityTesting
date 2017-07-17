@@ -271,5 +271,5 @@ def points_to_netcdf(dataframe,
     ncfile.close()
 
 
-#dataframe = pd_from_2Dnetcdf(r"H:\workspace\HomogeneityTesting\output\CCI31EGU\HomogeneityTest_merra2_2007-10-01.nc", grid="global")
-#points_to_netcdf(dataframe[['test_results']],r'H:\workspace\HomogeneityTesting\output\CCI31EGU',None,'test',None,None)
+#dataframe = pd_from_2Dnetcdf(r"H:\HomogeneityTesting_data\output\CCI31EGU\HomogeneityTest_merra2_2007-10-01.nc", grid="global")
+#points_to_netcdf(dataframe[['test_results']],r'H:\HomogeneityTesting_data\output\CCI31EGU',None,'test',None,None)

@@ -10,7 +10,7 @@ import numpy as np
 def cells_for_continent(continent):
     # type: (str) -> dict
     # continents in file: "Australia", "North_America"
-    with open(r"H:\continents_cells.txt", 'r') as f:
+    with open(r"H:\HomogeneityTesting_data\continents_cells.txt", 'r') as f:
         s = f.read()
         return ast.literal_eval(s)[continent]
 

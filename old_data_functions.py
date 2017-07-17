@@ -103,5 +103,5 @@ def correct_grid(workdir):
         points_to_netcdf(dataframe[var_names],workdir,None,'HomogeneityTest_merra2_%s' % breaktime,None,var_meta_dicts)
 
 
-#correct_grid(r"H:\workspace\HomogeneityTesting\output\CCI33")
-#csv_to_netcdf(r"H:\workspace\HomogeneityTesting\output\CCI31EGU")
+#correct_grid(r"H:\HomogeneityTesting_data\output\CCI33")
+#csv_to_netcdf(r"H:\HomogeneityTesting_data\HomogeneityTesting\output\CCI31EGU")

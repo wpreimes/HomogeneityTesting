@@ -29,15 +29,16 @@ from points_to_netcdf import pd_from_2Dnetcdf
 from netCDF4 import Dataset
 
 def inhomo_plot_with_stats(workdir, filename):
-    # type: (str) -> str
+    # type: (str) -> dict
     '''
     :param workdir: path to directory containing nc files from HomogeneityTesting
     :return: None
     '''
+    filepath = os.path.join(workdir, filename + '.nc')
     landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
     land_points = landgrid.get_grid_points()[0]
 
-    DF_Points = pd_from_2Dnetcdf(filename, grid='global')
+    DF_Points = pd_from_2Dnetcdf(filepath, grid='global')
 
     splitname = filename.split('_') #0=HomogeneityTest, 1=RefData, 2=breaktime
 
@@ -111,8 +112,8 @@ def inhomo_plot_with_stats(workdir, filename):
     plt.annotate(textbox, fontsize=15, xy=(0.025, 0.05), xycoords='axes fraction',
                  bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
-    filename = 'HomogeneityTest_%s_(breaktime-%s)' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
-    plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
+    plotfile_name = 'HomogeneityTest_%s_(breaktime-%s)' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
+    plt.savefig(workdir + '\\' + plotfile_name + '.png', dpi=f.dpi)
 
     return {'tested_gps': all_tested, 'wk_of_tested' : wk_tested, 'fk_of_tested': fk_tested,
             'both_of_tested': both_tested}
@@ -204,6 +205,7 @@ def show_tested_gpis(workdir, filename):
     Calculate spatial plots for the areas where Homogeneity Tests were (not)
     performed
     '''
+    filepath = os.path.join(workdir, filename + '.nc')
     landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
     land_points = landgrid.get_grid_points()[0]
 
@@ -211,10 +213,9 @@ def show_tested_gpis(workdir, filename):
     products = log.get_products()
     ref_prod = products['ref_prod']
     test_prod = products['test_prod']
+    DF_Points = pd_from_2Dnetcdf(filepath, grid='global')
 
-    DF_Points = pd_from_2Dnetcdf(os.path.join(workdir,filename), grid='global')
-
-    status_var = Dataset(os.path.join(workdir,filename)).variables['status']
+    status_var = Dataset(filepath).variables['status']
 
     splitname = filename.split('_')
     if ref_prod != splitname[1]:
@@ -288,8 +289,8 @@ def show_tested_gpis(workdir, filename):
     plt.annotate(textbox, fontsize=10, xy=(0.025, 0.05), xycoords='axes fraction',
                  bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
-    filename = 'RT_coverage_%s_%s' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
-    plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
+    plotfile_name = 'RT_coverage_%s_%s' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
+    plt.savefig(workdir + '\\' + plotfile_name + '.png', dpi=f.dpi)
 
     return meta
 '''
@@ -399,11 +400,11 @@ def extreme_break(workdir, ref_prod, test_prod):
         plt.savefig(workdir + '\\' + filename + '.png')
 '''
 
-# df = pd_from_2Dnetcdf(r"H:\workspace\HomogeneityTesting\output\CCI33\HomogeneityTest_merra2_1991-08-01.nc", return_only_tested=False)
-# extreme_break(r'H:\workspace\HomogeneityTesting\output\CCI22EGU','gldas_v2','cci_22')
-# inhomo_plot_with_stats(r"H:\workspace\HomogeneityTesting\output\CCI33")
-#calc_longest_homogeneous_period(r"H:\workspace\HomogeneityTesting\output\CCI31EGU",'cci_22','merra2')
-#show_tested_gpis(r"H:\workspace\HomogeneityTesting\output\CCI33")
-# inhomo_plot_with_stats(r'H:\workspace\HomogeneityTesting\output\v32')
-# compare_RTM_RTG(r'H:\workspace\HomogeneityTesting\output\CCI31EGU','merra2')
-# show_tested_gpis(r"H:\workspace\HomogeneityTesting\output\v30",'gldas-merged')
+# df = pd_from_2Dnetcdf(r"H:\HomogeneityTesting_data\output\CCI33\HomogeneityTest_merra2_1991-08-01.nc", return_only_tested=False)
+# extreme_break(r'H:\HomogeneityTesting_data\output\CCI22EGU','gldas_v2','cci_22')
+# inhomo_plot_with_stats(r"H:\HomogeneityTesting_data\output\CCI33")
+# calc_longest_homogeneous_period(r"H:\HomogeneityTesting_data\output\CCI31EGU",'cci_22','merra2')
+# show_tested_gpis(r"H:\HomogeneityTesting_data\output\CCI33")
+# inhomo_plot_with_stats(r'H:\HomogeneityTesting_data\output\v15',"HomogeneityTest_merra2_2011-10-01")
+# compare_RTM_RTG(r'H:\HomogeneityTesting_data\output\CCI31EGU','merra2')
+# show_tested_gpis(r"H:\HomogeneityTesting_data\output\v15","HomogeneityTest_merra2_2011-10-01")

@@ -155,4 +155,5 @@ def calc_longest_homogeneous_period(workdir, create_netcdf=True):
     else:
         return DF_Period
 
-#calc_longest_homogeneous_period(r"H:\workspace\HomogeneityTesting\output\CCI33", create_netcdf=True)
+#DF_Period = calc_longest_homogeneous_period(r"H:\HomogeneityTesting_data\output\CCI33", create_netcdf=False)
+#print(DF_Period.loc[242363])
