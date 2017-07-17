@@ -62,7 +62,8 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
     workfolder = create_workfolder(path)
        
     log_file = save_Log(workfolder, test_prod, ref_prod, anomaly, cells)
-    
+    filenames = []
+
     for breaktime, timeframe in zip(breaktimes, timeframes):
 
         test_obj = HomogTest(test_prod,
@@ -72,22 +73,25 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
                              0.01,
                              anomaly)
 
+
         filename = 'HomogeneityTest_%s_%s' % (test_obj.ref_prod, test_obj.breaktime.strftime("%Y-%m-%d"))
+        filenames.append(filename)
+
         save_obj = SaveResults(workfolder, grid, filename, buffer_size=300)
-                            
+
         log_file.add_line('%s: Start Testing Timeframe and Breaktime: %s and %s'
-                          % (datetime.now().strftime('%Y-%m-%d%H:%M:%S'), timeframe, breaktime))
-                        
+                          % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), timeframe, breaktime))
+
         for iteration, gpi in enumerate(grid_points):
             if iteration % 1000 == 0:
                 print 'Processing QDEG Point %i (iteration %i of %i)' % (gpi, iteration, len(grid_points))
-            
-            if test_obj.ref_prod == 'ISMN-merge':               
+
+            if test_obj.ref_prod == 'ISMN-merge':
                 valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
-                
+
                 if gpi not in valid_insitu_gpis.keys():
                     continue
-            
+
             try:
                 # test_obj.save_as_mat(gpi=gpi)
                 df_time, testresult = test_obj.run_tests(gpi=gpi,
@@ -97,7 +101,6 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
                 df_time = None
                 testresult = {'status': str(e)}
 
-
             save_obj.fill_buffer(gpi, testresult)
             if iteration == len(grid_points)-1:
                 # The last group of grid points is saved to file, also if the buffer size is not yet reached
@@ -106,25 +109,28 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
         # Add Info to log file
         log_file.add_line('%s: Finished testing for timeframe %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
                                                                      timeframe))
-
         log_file.add_line('Saved results to: HomogeneityTest_%s.csv' % breaktime)
 
     log_file.add_line('=====================================')
     #Plotting and netcdf files
-    ncfilename = calc_longest_homogeneous_period(workfolder, create_netcdf=True)
-    log_file.add_line('%s: Saved longest homogeneouse Period, startdate and enddate to %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+    for i, filename in enumerate(filenames):
+        # Create nc file with longest period data
+        ncfilename = calc_longest_homogeneous_period(workfolder, create_netcdf=True)
+        log_file.add_line('%s: Saved longest homogeneous Period, startdate, enddate to %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
                                                                                               ncfilename))
-    dir = show_tested_gpis(workfolder)
-    log_file.add_line('%s: Create coverage plots in %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
-                                                           dir))
-    dir = inhomo_plot_with_stats(workfolder)
-    log_file.add_line('%s: Create nice Test Results plots with stats in %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
-                                                                               dir))
+        #Create coverage plots
+        meta = show_tested_gpis(workfolder, filename)
+        log_file.add_line('%s: Create coverage plots with groups %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+                                                                        str(meta)))
+        #Create plots of test results with statistics
+        stats = inhomo_plot_with_stats(workfolder, filename)
+        log_file.add_line('%s: Create nice Test Results plot with stats for breaktime %s: %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+                                                                                                 str(i), str(stats)))
     log_file.add_line('=====================================')
     if adjusted_ts_path:
         log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d%H:%M:%S')))
         pass
-        #Do TS adjsutement and save resutls to path
+        #Do TS adjutement and save resutls to path
 
 
 if __name__ == '__main__':
@@ -132,6 +138,7 @@ if __name__ == '__main__':
     # Testproduct of form cci_*version*_*product*
     start('cci_31_combined',
           'merra2',
-          r'H:\workspace\HomogeneityTesting\output',
-          cells=[602], skip_times=None, anomaly=False,
+          r'H:\HomogeneityTesting_data\output',
+          cells=[602], skip_times=None,
+          anomaly=False,
           adjusted_ts_path=None)

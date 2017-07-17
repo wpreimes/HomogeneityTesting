@@ -6,7 +6,7 @@ Created on Jul 12 11:00 2017
 """
 import numpy as np
 
-
+# This is depreciated
 class nlcmap(object):
     def __init__(self, cmap, levels):
         self.cmap = cmap

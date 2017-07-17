@@ -48,7 +48,7 @@ def read_warp_ssm(ssm, ssf, gpi):
 class QDEGdata_M(object):
     def __init__(self, products):
         self.products = products
-        self.lkup = pd.read_csv(r"H:\workspace\GPI_lookup\gpi_LUT.csv", index_col=0)
+        self.lkup = pd.read_csv(r"H:\HomogeneityTesting_data\merra_gpi_LUT.csv", index_col=0)
 
         dayproducts = []
 
@@ -184,14 +184,11 @@ class QDEGdata_D(object):
 
                     if os.path.isdir(r'D:\USERS\wpreimes\datasets\CCI_%s_D' % version):
                         print('Found local files for cci_%s data' % version)
-                        file_cfg = r"H:\workspace\HomogeneityTesting\local_file_paths\ESA_CCI_SM_v0%s.%s_local.cfg" % (
-                        version[0], version[1])
                     else:
-                        file_cfg = None
                         print('Try files for cci_%s data on R' % version)
                     cci = ESA_CCI_SM('ESA_CCI_SM_v0%s.%s' % (version[0], version[1]),
                                      parameter=type,
-                                     cfg_path=r"H:\workspace\HomogeneityTesting\cci_cfg_local")
+                                     cfg_path=r"H:\HomogeneityTesting_data\cci_cfg_local")
 
                     self.cci.update({cci_product: cci})
 
