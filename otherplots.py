@@ -45,6 +45,7 @@ def inhomo_plot_with_stats(workdir, filename):
     log = load_Log(workdir)
     products = log.get_products()
     ref_prod = products['ref_prod']
+    test_prod = products['test_prod']
     if ref_prod != splitname[1]:
         raise Exception('Reference Product from filename and log file not equal')
 
@@ -106,13 +107,13 @@ def inhomo_plot_with_stats(workdir, filename):
     for j, lab in enumerate(['Wilkoxon', 'Fligner-Killeen', 'Both', 'None']):
         cb.ax.text((2 * j + 1) / 8.0, .5, lab, fontsize=15, ha='center', va='center')
 
-    title = 'HomogeneityTesting \n %s|%s|Breaktime:%s' % ('CCI', ref_prod, breaktime.strftime("%Y-%m-%d"))
+    title = 'HomogeneityTesting \n %s|%s|Breaktime:%s' % (test_prod, ref_prod, breaktime.strftime("%Y-%m-%d"))
     plt.title(title, fontsize=20)
 
     plt.annotate(textbox, fontsize=15, xy=(0.025, 0.05), xycoords='axes fraction',
                  bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
-    plotfile_name = 'HomogeneityTest_%s_(breaktime-%s)' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
+    plotfile_name = 'HomogeneityTest_%s_%s' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
     plt.savefig(workdir + '\\' + plotfile_name + '.png', dpi=f.dpi)
 
     return {'tested_gps': all_tested, 'wk_of_tested' : wk_tested, 'fk_of_tested': fk_tested,

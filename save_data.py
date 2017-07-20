@@ -11,7 +11,7 @@ import os
 
 class save_Log(object):
     def __init__(self, workfolder, test_prod, ref_prod, anomaly, cells):
-        # type: (str, str, str, bool, list) -> None
+        # type: (str, str, str, str, list) -> None
         self.workfolder = workfolder
 
         with open(os.path.join(workfolder, 'log.txt'), 'w') as f:

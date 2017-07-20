@@ -86,15 +86,25 @@ def single_test_for_breaktime(q, workfolder, grid, grid_points, log_file, test_p
             save_obj.save_to_netcdf()
 
     # Add Info to log file
-    log_file.add_line('%s: Finished testing for timeframe %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+    log_file.add_line('%s: Finished testing for timeframe %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                                                                  timeframe))
-    log_file.add_line('Saved results to: HomogeneityTest_%s.csv' % breaktime)
+    log_file.add_line('Saved results to: HomogeneityTest_%s.nc' % breaktime)
     #Return filename
     q.put(filename)
 
-def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=False, adjusted_ts_path=None):
-    # type: (str, str, str, Union[list,str], Union[list,None], bool) -> None
+def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=None, adjusted_ts_path=None):
+    # type: (str, str, str, Union[list,str], Union[list,None], str, Union[str,None]) -> None
+    '''
 
+    :param test_prod: cci_version_product
+    :param ref_prod: merra2
+    :param path:
+    :param cells: global, Australia, North_America or [cellslist]
+    :param skip_times: [int] eg. [0,1,2] to skip certain breaktimes
+    :param anomaly: None or 'ccirange' or 'timeframe'
+    :param adjusted_ts_path: path to where adjusted data is saved
+    :return:
+    '''
     testtimes = cci_timeframes(test_prod, skip_times=skip_times)
 
     timeframes = testtimes['timeframes']
@@ -132,7 +142,7 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
                                                                                               ncfilename))
         #Create coverage plots
         meta = show_tested_gpis(workfolder, filename)
-        log_file.add_line('%s: Create coverage plots with groups %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+        log_file.add_line('%s: Create coverage plots with groups %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                                                                         str(meta)))
         #Create plots of test results with statistics
         stats = inhomo_plot_with_stats(workfolder, filename)
@@ -140,7 +150,7 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
                                                                                                  str(i), str(stats)))
     log_file.add_line('=====================================')
     if adjusted_ts_path:
-        log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d%H:%M:%S')))
+        log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         pass
         #Do TS adjutement and save resutls to path
 
@@ -152,5 +162,5 @@ if __name__ == '__main__':
           'merra2',
           r'H:\HomogeneityTesting_data\output',
           cells='global', skip_times=None,
-          anomaly=False,
+          anomaly='ccirange',
           adjusted_ts_path=None)
