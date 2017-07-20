@@ -206,8 +206,6 @@ class Adjust(HomogTest):
         # self.
         #self.fill_ncfile(gpi, data[['testdata']], path=self.adjusted_data_path, ts_column_name='testdata')
 
-
-
 def fill_ncfile(gpi, ts, path, ts_column_name = None, grid = None):
     if not grid:
         grid = nc.load_grid(os.path.join(root.r, 'Datapool_processed', 'GLDAS', 'GLDAS_NOAH025_3H.020',
@@ -235,11 +233,14 @@ def fill_ncfile(gpi, ts, path, ts_column_name = None, grid = None):
 
         with OrthoMultiTs(filepath, mode='w', n_loc=grid_points.size) as ncfile:
             ncfile.variables['location_id'][:] = grid_points
-            dates = dates_to_num(ts.index).tolist()
-            ncfile.extend_time(dates, direct = True)
+            #dates = dates_to_num(ts.index).tolist()
+            #ncfile.extend_time(dates, direct = True)
         # Retry
         fill_ncfile(gpi, ts, path, ts_column_name, grid)
 
+def fill_ncfile_all_points(filename, loc_ids, data_dict, dates):
+    with OrthoMultiTs(filename, n_loc=loc_ids.size, mode='w') as dataset:
+        dataset.write_ts_all_loc(loc_ids, data_dict, dates)
 
 adjust_obj = Adjust(r"H:\HomogeneityTesting_data\output\CCI31EGU",
                     'cci_31_combined',
@@ -254,10 +255,20 @@ adjust_obj = Adjust(r"H:\HomogeneityTesting_data\output\CCI31EGU",
 
 gpis=[242363,242364]
 adjusted_data_path = r"D:\users\wpreimes\datasets\CCI_adjusted"
-for gpi in gpis:
+adjusted_gpis ={}
+for index, gpi in enumerate(gpis):
     adjusted_data = adjust_obj.adjust_ts(gpi)
+    adjusted_gpis[str(index)] = adjusted_data.values
+
+data =adjusted_gpis.as_matrix
+'''
+                np.arange(adjusted_data.values).reshape(3, n_data)}
+    fill_ncfile_all_points(filename =r"D:\users\wpreimes\datasets\CCI_adjusted\testfile.nc",
+                           loc_ids=np.asarray(gpis),
+                           data_dict=adjusted_data.to_dict())
     fill_ncfile(gpi=gpi, ts=adjusted_data, path=adjusted_data_path, ts_column_name='adjusted')
 
+'''
 '''
 adjust_obj.fill_ncfile(gpi=242363,
                        ts=ts,
