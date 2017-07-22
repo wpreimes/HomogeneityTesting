@@ -9,9 +9,11 @@ import numpy as np
 from scipy import stats
 import os
 import pygeogrids.netcdf as nc
+import pynetcf.time_series as ncf
 import rsdata.root_path as root
 from datetime import datetime, timedelta
 from pynetcf.time_series import OrthoMultiTs
+from points_to_netcdf import points_to_netcdf
 
 from HomogeneityTesting.otherfunctions import dates_to_num, regress
 from HomogeneityTesting.interface import HomogTest
@@ -135,8 +137,7 @@ class Adjust(HomogTest):
         data = self.read_gpi(gpi)[starttime:endtime]
 
         if len(breaktimes) == 0:
-            self.fill_ncfile(gpi, data['testdata'], self.adjusted_data_path, ts_column_name=self.test_prod)
-            return
+            return data[['testdata']].rename(columns={'testdata':'not_adjusted'})
 
 
         df_adjusted=pd.DataFrame(columns=['testdata'])
@@ -206,6 +207,7 @@ class Adjust(HomogTest):
         # self.
         #self.fill_ncfile(gpi, data[['testdata']], path=self.adjusted_data_path, ts_column_name='testdata')
 
+'''
 def fill_ncfile(gpi, ts, path, ts_column_name = None, grid = None):
     if not grid:
         grid = nc.load_grid(os.path.join(root.r, 'Datapool_processed', 'GLDAS', 'GLDAS_NOAH025_3H.020',
@@ -241,37 +243,95 @@ def fill_ncfile(gpi, ts, path, ts_column_name = None, grid = None):
 def fill_ncfile_all_points(filename, loc_ids, data_dict, dates):
     with OrthoMultiTs(filename, n_loc=loc_ids.size, mode='w') as dataset:
         dataset.write_ts_all_loc(loc_ids, data_dict, dates)
-
-adjust_obj = Adjust(r"H:\HomogeneityTesting_data\output\CCI31EGU",
-                    'cci_31_combined',
-                    'merra2',
-                    0.1)
-
-# random test data
-#startdate = datetime.strptime(adjust_obj.timeframes[0][0], '%Y-%m-%d')
-#enddate = datetime.strptime(adjust_obj.timeframes[-1][-1], '%Y-%m-%d')
-#dates = [startdate + timedelta(days=x) for x in range((enddate - startdate).days + 1)]
-#ts = pd.DataFrame(index = dates, data = {'rand_data': np.random.rand(len(dates))})
-
-gpis=[242363,242364]
-adjusted_data_path = r"D:\users\wpreimes\datasets\CCI_adjusted"
-adjusted_gpis ={}
-for index, gpi in enumerate(gpis):
-    adjusted_data = adjust_obj.adjust_ts(gpi)
-    adjusted_gpis[str(index)] = adjusted_data.values
-
-data =adjusted_gpis.as_matrix
 '''
-                np.arange(adjusted_data.values).reshape(3, n_data)}
-    fill_ncfile_all_points(filename =r"D:\users\wpreimes\datasets\CCI_adjusted\testfile.nc",
-                           loc_ids=np.asarray(gpis),
-                           data_dict=adjusted_data.to_dict())
-    fill_ncfile(gpi=gpi, ts=adjusted_data, path=adjusted_data_path, ts_column_name='adjusted')
+def write_gpis_to_file(data, dates, loc_ids, filepath, filename):
 
-'''
-'''
-adjust_obj.fill_ncfile(gpi=242363,
-                       ts=ts,
-                       ts_column_name='rand_data',
-                       path=r"D:\users\wpreimes\datasets\CCI_adjusted")
-'''
+    with ncf.OrthoMultiTs(os.path.join(filepath, filename), n_loc=loc_ids.size,
+                         mode='w') as dataset:
+
+        locations = loc_ids
+
+        data = data
+        dates = dates_to_num(dates)
+        # descriptions = np.repeat([str('station')], 3).tolist()
+
+        dataset.write_ts_all_loc(locations, data, dates, dates_direct=True)
+
+    with ncf.OrthoMultiTs(os.path.join(filepath, filename), mode='r') as dataset:
+        print('check')
+
+
+if __name__ == '__main__':
+
+    adjust_obj = Adjust(r"D:\users\wpreimes\HomogeneityTest_Data\output\CCI31EGU",
+                        'cci_31_combined',
+                        'merra2',
+                        0.1)
+
+    # random test data
+    #startdate = datetime.strptime(adjust_obj.timeframes[0][0], '%Y-%m-%d')
+    #enddate = datetime.strptime(adjust_obj.timeframes[-1][-1], '%Y-%m-%d')
+    #dates = [startdate + timedelta(days=x) for x in range((enddate - startdate).days + 1)]
+    #ts = pd.DataFrame(index = dates, data = {'rand_data': np.random.rand(len(dates))})
+
+    grid_path=r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc"
+    cell_grid = nc.load_grid(grid_path)
+    cells=cells_for_continent('Australia')
+    #cells=[2280]
+
+    # if os.path.isfile(r"D:\users\wpreimes\HomogeneityTest_Data\v2\adjusted\adjusted_cell_2280.csv"):
+    #    print('found csv')
+    #    adjusted_gpis = pd.read_csv(r"D:\users\wpreimes\HomogeneityTest_Data\v2\adjusted\adjusted_cell_2280.csv", index_col=0)
+    #    adjusted_gpis.index = pd.DatetimeIndex(adjusted_gpis.index)
+    #else:
+    adjusted_data_path = r"D:\users\wpreimes\HomogeneityTest_Data\output\CCI31EGU\adjusted"
+    adjusted_gpis =pd.DataFrame()
+    #TODO: Add own list for points should have been adjusted but could not
+    what_gpis_are_adjusted={'gpi':[], 'adjustment_class':[]} #0= UNadjusted, 1=adjusted
+    for cell_index, cell in enumerate(cells):
+        if cell in [2174,2210,2246,2247,2282,2283,2318,2319,2354] : continue #already processed
+        print('cell %i of %i' %(cell_index, len(cells)))
+        gpis=cell_grid.grid_points_for_cell(cell)[0]
+        for index, gpi in enumerate(gpis):
+            if index % 50 ==0:
+                print('%i of %i' % (index, gpis.size))
+            try:
+                adjusted_data = adjust_obj.adjust_ts(gpi)
+            except:
+                continue
+            column_name = adjusted_data.columns.values[0]
+            if column_name == 'not_adjusted':
+                what_gpis_are_adjusted['gpi'].append(gpi)
+                what_gpis_are_adjusted['adjustment_class'].append(0)
+            if column_name == 'adjusted':
+                what_gpis_are_adjusted['gpi'].append(gpi)
+                what_gpis_are_adjusted['adjustment_class'].append(1)
+            if adjusted_gpis.index.size == 0:
+                adjusted_gpis=adjusted_data.rename(columns={column_name:gpi})
+            else:
+                adjusted_gpis[gpi] = adjusted_data
+
+
+
+        dates = np.array([date.to_datetime() for date in pd.to_datetime(adjusted_gpis.index.values)])
+        data = {'sm_adjusted': np.array([adjusted_gpis[gpi].values for gpi in adjusted_gpis.columns.values])}
+        loc_ids = adjusted_gpis.columns.values
+
+        write_gpis_to_file(data,dates,loc_ids, adjusted_data_path, str(cell)+'.nc')
+
+        df_adjustment_class = pd.DataFrame(index=what_gpis_are_adjusted['gpi'], data={'adjustement_class':[what_gpis_are_adjusted['adjustment_class']]})
+        points_to_netcdf(dataframe=df_adjustment_class,path=adjusted_data_path, filename=str(cell))
+    '''
+                    np.arange(adjusted_data.values).reshape(3, n_data)}
+        fill_ncfile_all_points(filename =r"D:\users\wpreimes\datasets\CCI_adjusted\testfile.nc",
+                               loc_ids=np.asarray(gpis),
+                               data_dict=adjusted_data.to_dict())
+        fill_ncfile(gpi=gpi, ts=adjusted_data, path=adjusted_data_path, ts_column_name='adjusted')
+
+    '''
+    '''
+    adjust_obj.fill_ncfile(gpi=242363,
+                           ts=ts,
+                           ts_column_name='rand_data',
+                           path=r"D:\users\wpreimes\datasets\CCI_adjusted")
+    '''
