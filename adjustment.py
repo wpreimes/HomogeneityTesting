@@ -289,7 +289,7 @@ if __name__ == '__main__':
     #TODO: Add own list for points should have been adjusted but could not
     what_gpis_are_adjusted={'gpi':[], 'adjustment_class':[]} #0= UNadjusted, 1=adjusted
     for cell_index, cell in enumerate(cells):
-        if cell in [2174,2210,2246,2247,2282,2283,2318,2319,2354] : continue #already processed
+        if cell in [2174,2210,2246,2247,2282,2283,2318,2319,2354,2353] : continue #already processed
         print('cell %i of %i' %(cell_index, len(cells)))
         gpis=cell_grid.grid_points_for_cell(cell)[0]
         for index, gpi in enumerate(gpis):
@@ -320,7 +320,8 @@ if __name__ == '__main__':
         write_gpis_to_file(data,dates,loc_ids, adjusted_data_path, str(cell)+'.nc')
 
         df_adjustment_class = pd.DataFrame(index=what_gpis_are_adjusted['gpi'], data={'adjustement_class':[what_gpis_are_adjusted['adjustment_class']]})
-        points_to_netcdf(dataframe=df_adjustment_class,path=adjusted_data_path, filename=str(cell))
+        points_to_netcdf(dataframe=df_adjustment_class,path=adjusted_data_path, filename="adjustment_class.nc")
+
     '''
                     np.arange(adjusted_data.values).reshape(3, n_data)}
         fill_ncfile_all_points(filename =r"D:\users\wpreimes\datasets\CCI_adjusted\testfile.nc",
