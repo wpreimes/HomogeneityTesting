@@ -15,8 +15,8 @@ from datetime import datetime
 from pygeogrids.netcdf import load_grid
 from multiprocessing import Process, Queue
 
-from HomogeneityTesting.interface import HomogTest
-from HomogeneityTesting.otherfunctions import cci_timeframes
+from interface import HomogTest
+from otherfunctions import cci_timeframes
 from HomogeneityTesting.save_data import SaveResults, save_Log
 from HomogeneityTesting.grid_functions import grid_points_for_cells
 from HomogeneityTesting.otherplots import show_tested_gpis, inhomo_plot_with_stats
@@ -92,6 +92,7 @@ def single_test_for_breaktime(q, workfolder, grid, grid_points, log_file, test_p
     #Return filename
     q.put(filename)
 
+
 def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=None, adjusted_ts_path=None):
     # type: (str, str, str, Union[list,str], Union[list,None], str, Union[str,None]) -> None
     '''
@@ -158,9 +159,9 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Non
 if __name__ == '__main__':
     # Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
     # Testproduct of form cci_*version*_*product*
-    start('cci_31_passive',
+    start('adjusted_cci',
           'merra2',
           r'H:\HomogeneityTesting_data\output',
-          cells='global', skip_times=None,
-          anomaly='ccirange',
+          cells='Australia', skip_times=None,
+          anomaly=None,
           adjusted_ts_path=None)

@@ -336,4 +336,5 @@ class HomogTest(object):
         breaktime = datetime2matlabdn(self.breaktime)
 
         data_dict = {'X': x, 'Y': y, 'timeframe': timeframe, 'breaktime': breaktime}
-        io.savemat('matlab_data\SMdata_' + str(gpi), data_dict, oned_as='column')
+        io.savemat('matlab_data\SMdata_' + str(gpi) + breaktime.strftime('%Y-%m-%d'),
+                   data_dict, oned_as='column')

@@ -19,9 +19,12 @@ def regress(data):
     Perform regression of column refdata on column testdata
     '''
     dataframe = data.copy()
+    out = dataframe.refdata
+    dataframe = dataframe.dropna()
     # Berechnet Korrelation zwischen Testdaten und Referenzdaten
     R, pval = stats.pearsonr(dataframe.refdata, dataframe.testdata)
-    out = dataframe.refdata
+
+
     if R < 0 or np.isnan(R):
         ress = [np.nan]
         return out, R, pval, ress
@@ -177,6 +180,7 @@ def cci_timeframes(product, skip_times=None):
                                        '2007-01-01', '2002-07-01', '1998-01-01', '1991-08-01'])
                 }
 
+
     ranges = {'cci_22_combined': ['1980-01-01', '2014-12-31'],
               'cci_31_combined': ['1980-01-01', '2015-12-31'],
               'cci_31_passive': ['1980-01-01', '2015-12-31'],
@@ -184,6 +188,13 @@ def cci_timeframes(product, skip_times=None):
               'cci_32_combined': ['1980-01-01', '2015-12-31'],
               'cci_33_combined': ['1980-01-01', '2016-12-31']
               }
+
+    # TODO: Delete [+4]!!
+    timeframes['adjusted_cci']=timeframes['cci_31_combined']
+    ranges['adjusted_cci'] = ranges['cci_31_combined']
+    breaktimes['adjusted_cci'] = breaktimes['cci_31_combined']
+    #---------------------
+
 
     if product not in timeframes.keys() or product not in breaktimes.keys() or product not in ranges.keys():
         raise Exception('No test times for selected cci product')
