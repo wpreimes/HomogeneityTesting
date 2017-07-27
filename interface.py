@@ -8,7 +8,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
-import re
+from typing import Union
 
 from datetime import datetime
 
@@ -25,7 +25,7 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
 class HomogTest(object):
     def __init__(self, test_prod, ref_prod, timeframe, breaktime, alpha, anomaly):
-        # type: (str,str,list,str,float,bool) -> None
+        # type: (str,str,list,str,float,Union(bool,str)) -> None
         '''
         :param test_prod:
         :param ref_prod:
@@ -36,20 +36,25 @@ class HomogTest(object):
         '''
         self.ref_prod = ref_prod
         self.test_prod = test_prod
-        self.timeframe = [datetime.strptime(timeframe[0], '%Y-%m-%d'),
-                          datetime.strptime(timeframe[1], '%Y-%m-%d')]
-        self.breaktime = datetime.strptime(breaktime, '%Y-%m-%d')
-        self.alpha = alpha
+        if breaktime and timeframe.size == 2:
+            self.timeframe = [datetime.strptime(timeframe[0], '%Y-%m-%d'),
+                              datetime.strptime(timeframe[1], '%Y-%m-%d')]
 
-        self.anomaly = anomaly
+            self.breaktime = datetime.strptime(breaktime, '%Y-%m-%d')
 
-        if self.ref_prod == 'ISMN-merge':
-            self.data = QDEGdata_M(products=[test_prod])
-            self.ismndata = ISMNdataUSA(self.timeframe, self.breaktime, max_depth=0.1)
+            if self.ref_prod == 'ISMN-merge':
+                self.data = QDEGdata_M(products=[test_prod])
+                self.ismndata = ISMNdataUSA(self.timeframe, self.breaktime, max_depth=0.1)
+            else:
+                self.data = QDEGdata_M(products=[self.ref_prod, self.test_prod])
 
-        else:
+        else: # if timeframe and breaktime are None
+            self.timeframe = timeframe
+            self.breaktime = breaktime
             self.data = QDEGdata_M(products=[self.ref_prod, self.test_prod])
 
+        self.alpha = alpha
+        self.anomaly = anomaly
         self.valid_range = self._init_validate_cci_range()
 
     def _init_validate_cci_range(self):
@@ -60,14 +65,16 @@ class HomogTest(object):
         if not any([cci_re[version].match(self.test_prod) for version, x in cci_re.iteritems()]):
             raise Exception('Unknown Test Product')
         else:
-        '''
+        
         prefix, version, type = self.test_prod.split('_')
         name = prefix + '_' + version
-
-        for time in self.timeframe:
-            if not valid_ranges[0] <= time.strftime('%Y-%m-%d') <= valid_ranges[1]:
-                raise Exception('Selected Timeframe is not valid for product %s' % self.test_prod)
-            else:
+        '''
+        if not self.timeframe: # for adjustment no timeframes are given
+            return valid_ranges
+        else: # if timeframes are given, do some testing
+            for time in self.timeframe:
+                if not valid_ranges[0] <= time.strftime('%Y-%m-%d') <= valid_ranges[1]:
+                    raise Exception('Selected Timeframe is not valid for product %s' % self.test_prod)
                 return valid_ranges
 
     @staticmethod
@@ -166,7 +173,15 @@ class HomogTest(object):
         # type: (int) -> pd.DataFrame
         # Observation and reference data
 
-        ttime = [self.timeframe[0], self.breaktime, self.timeframe[1]]
+        if not self.timeframe and not self.breaktime:
+            # For adjustment read dara from first to last valid date
+            # TODO: Change this to fit with lower ttime
+            ttime = [datetime.strptime(self.valid_range[0],'%Y-%m-%d'),
+                     None,
+                     datetime.strptime(self.valid_range[1], '%Y-%m-%d')]
+        else:
+            # For break detection data reading
+            ttime = [self.timeframe[0], self.breaktime, self.timeframe[1]]
 
         # Import the test data and reference datasets for the active ground point
         if self.anomaly == 'ccirange':
@@ -179,7 +194,7 @@ class HomogTest(object):
                     df_time = df_time / 100  # type: pd.DataFrame
                     df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
                     df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
-                    df_time = df_time.loc[ttime[0].strftime('%Y-%m-%d'):ttime[1].strftime('%Y-%m-%d')]
+                    df_time = df_time.loc[ttime[0].strftime('%Y-%m-%d'):ttime[2].strftime('%Y-%m-%d')]
                 except:
                     raise Exception('9: Could not import data for gpi %i' % gpi)
         else:
@@ -321,4 +336,5 @@ class HomogTest(object):
         breaktime = datetime2matlabdn(self.breaktime)
 
         data_dict = {'X': x, 'Y': y, 'timeframe': timeframe, 'breaktime': breaktime}
-        io.savemat('matlab_data\SMdata_' + str(gpi), data_dict, oned_as='column')
+        io.savemat('matlab_data\SMdata_' + str(gpi) + breaktime.strftime('%Y-%m-%d'),
+                   data_dict, oned_as='column')

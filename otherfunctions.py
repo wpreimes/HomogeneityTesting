@@ -9,17 +9,22 @@ from scipy import stats
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
+from netCDF4 import date2num
 
 from datetime import datetime
 
 
-def regress(dataframe):
+def regress(data):
     '''
     Perform regression of column refdata on column testdata
     '''
+    dataframe = data.copy()
+    out = dataframe.refdata
+    dataframe = dataframe.dropna()
     # Berechnet Korrelation zwischen Testdaten und Referenzdaten
     R, pval = stats.pearsonr(dataframe.refdata, dataframe.testdata)
-    out = dataframe.refdata
+
+
     if R < 0 or np.isnan(R):
         ress = [np.nan]
         return out, R, pval, ress
@@ -33,7 +38,7 @@ def regress(dataframe):
     xm = np.matrix(dataframe.as_matrix(columns=['ones', 'refdata']))
     out = np.dot(xm, np.matrix(ress).transpose())
 
-    return out, R, pval, ress
+    return pd.Series(index=dataframe.index, data=np.squeeze(np.asarray(out))), R, pval, ress
 
 
 def datetime2matlabdn(dt):
@@ -41,6 +46,23 @@ def datetime2matlabdn(dt):
     mdn = dt + timedelta(days=366)
     frac = (dt - datetime(dt.year, dt.month, dt.day, 0, 0, 0)).seconds / (24.0 * 60.0 * 60.0)
     return mdn.toordinal() + frac
+
+
+def dates_to_num(dates):
+    calendar = 'standard'
+    units = 'days since 1900-01-01 00:00:00'
+    timestamps=[]
+    for date in dates:
+        timestamps.append(pd.Timestamp(date).to_datetime())
+
+    return np.sort(date2num(timestamps, units, calendar))
+
+
+def dt_to_dec(dt):
+    # Datetime object to decimal year
+    startyear = datetime(dt.year, 1, 1)
+    endyear = startyear.replace(year=dt.year + 1)
+    return dt.year + ((dt - startyear).total_seconds() / float((endyear - startyear).total_seconds()))
 
 
 def fill_holes_lress(fill_series, other_series):
@@ -113,13 +135,6 @@ def merge_ts(dataframe):
         merged_ts = fill_holes_lress(max_series, other_series_merged)
         return merged_ts
 
-def dt_to_dec(dt):
-    # Datetime object to decimal year
-    startyear = datetime(dt.year, 1, 1)
-    endyear = startyear.replace(year=dt.year+1)
-    return dt.year + ((dt - startyear).total_seconds() / float((endyear - startyear).total_seconds()))
-
-
 def cci_timeframes(product, skip_times=None):
     # TODO: Add timeframes for active and passive products for 22 and 33
     # TODO: Check timeframe and breaktimes for CCI33
@@ -165,6 +180,7 @@ def cci_timeframes(product, skip_times=None):
                                        '2007-01-01', '2002-07-01', '1998-01-01', '1991-08-01'])
                 }
 
+
     ranges = {'cci_22_combined': ['1980-01-01', '2014-12-31'],
               'cci_31_combined': ['1980-01-01', '2015-12-31'],
               'cci_31_passive': ['1980-01-01', '2015-12-31'],
@@ -172,6 +188,13 @@ def cci_timeframes(product, skip_times=None):
               'cci_32_combined': ['1980-01-01', '2015-12-31'],
               'cci_33_combined': ['1980-01-01', '2016-12-31']
               }
+
+    # TODO: Delete [+4]!!
+    timeframes['adjusted_cci']=timeframes['cci_31_combined']
+    ranges['adjusted_cci'] = ranges['cci_31_combined']
+    breaktimes['adjusted_cci'] = breaktimes['cci_31_combined']
+    #---------------------
+
 
     if product not in timeframes.keys() or product not in breaktimes.keys() or product not in ranges.keys():
         raise Exception('No test times for selected cci product')

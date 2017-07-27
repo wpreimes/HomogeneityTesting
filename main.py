@@ -13,9 +13,10 @@ from typing import Union
 import os
 from datetime import datetime
 from pygeogrids.netcdf import load_grid
+from multiprocessing import Process, Queue
 
-from HomogeneityTesting.interface import HomogTest
-from HomogeneityTesting.otherfunctions import cci_timeframes
+from interface import HomogTest
+from otherfunctions import cci_timeframes
 from HomogeneityTesting.save_data import SaveResults, save_Log
 from HomogeneityTesting.grid_functions import grid_points_for_cells
 from HomogeneityTesting.otherplots import show_tested_gpis, inhomo_plot_with_stats
@@ -40,12 +41,71 @@ def create_workfolder(path):
     workfolder = os.path.join(path, 'v'+str(i))
     print('Create workfolder:%s' % str(workfolder))
         
-    return workfolder       
+    return workfolder
+
+def single_test_for_breaktime(q, workfolder, grid, grid_points, log_file, test_prod, ref_prod, timeframe, breaktime, anomaly):
+    #Function for multicore processing
+
+    test_obj = HomogTest(test_prod,
+                         ref_prod,
+                         timeframe,
+                         breaktime,
+                         0.01,
+                         anomaly)
+
+    filename = 'HomogeneityTest_%s_%s' % (test_obj.ref_prod, test_obj.breaktime.strftime("%Y-%m-%d"))
 
 
-def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=False, adjusted_ts_path=None):
-    # type: (str, str, str, Union[list,str], Union[list,None], bool) -> None
+    save_obj = SaveResults(workfolder, grid, filename, buffer_size=300)
 
+    log_file.add_line('%s: Start Testing Timeframe and Breaktime: %s and %s'
+                      % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), timeframe, breaktime))
+
+    for iteration, gpi in enumerate(grid_points):
+        if iteration % 1000 == 0:
+            print 'Processing QDEG Point %i (iteration %i of %i)' % (gpi, iteration, len(grid_points))
+
+        if test_obj.ref_prod == 'ISMN-merge':
+            valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
+
+            if gpi not in valid_insitu_gpis.keys():
+                continue
+
+        try:
+            # test_obj.save_as_mat(gpi=gpi)
+            df_time, testresult = test_obj.run_tests(gpi=gpi,
+                                                     tests=['wk', 'fk'])
+            testresult.update({'status': '0: Testing successful'})
+        except Exception as e:
+            df_time = None
+            testresult = {'status': str(e)}
+
+        save_obj.fill_buffer(gpi, testresult)
+        if iteration == len(grid_points) - 1:
+            # The last group of grid points is saved to file, also if the buffer size is not yet reached
+            save_obj.save_to_netcdf()
+
+    # Add Info to log file
+    log_file.add_line('%s: Finished testing for timeframe %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                                                 timeframe))
+    log_file.add_line('Saved results to: HomogeneityTest_%s.nc' % breaktime)
+    #Return filename
+    q.put(filename)
+
+
+def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=None, adjusted_ts_path=None):
+    # type: (str, str, str, Union[list,str], Union[list,None], str, Union[str,None]) -> None
+    '''
+
+    :param test_prod: cci_version_product
+    :param ref_prod: merra2
+    :param path:
+    :param cells: global, Australia, North_America or [cellslist]
+    :param skip_times: [int] eg. [0,1,2] to skip certain breaktimes
+    :param anomaly: None or 'ccirange' or 'timeframe'
+    :param adjusted_ts_path: path to where adjusted data is saved
+    :return:
+    '''
     testtimes = cci_timeframes(test_prod, skip_times=skip_times)
 
     timeframes = testtimes['timeframes']
@@ -62,54 +122,17 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
     workfolder = create_workfolder(path)
        
     log_file = save_Log(workfolder, test_prod, ref_prod, anomaly, cells)
-    filenames = []
 
+    q = Queue()
     for breaktime, timeframe in zip(breaktimes, timeframes):
+        p = Process(target=single_test_for_breaktime, args=(q, workfolder, grid, grid_points,
+                                                            log_file, test_prod, ref_prod, timeframe,
+                                                            breaktime, anomaly))
+        p.start()
 
-        test_obj = HomogTest(test_prod,
-                             ref_prod,
-                             timeframe,
-                             breaktime,
-                             0.01,
-                             anomaly)
-
-
-        filename = 'HomogeneityTest_%s_%s' % (test_obj.ref_prod, test_obj.breaktime.strftime("%Y-%m-%d"))
-        filenames.append(filename)
-
-        save_obj = SaveResults(workfolder, grid, filename, buffer_size=300)
-
-        log_file.add_line('%s: Start Testing Timeframe and Breaktime: %s and %s'
-                          % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), timeframe, breaktime))
-
-        for iteration, gpi in enumerate(grid_points):
-            if iteration % 1000 == 0:
-                print 'Processing QDEG Point %i (iteration %i of %i)' % (gpi, iteration, len(grid_points))
-
-            if test_obj.ref_prod == 'ISMN-merge':
-                valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
-
-                if gpi not in valid_insitu_gpis.keys():
-                    continue
-
-            try:
-                # test_obj.save_as_mat(gpi=gpi)
-                df_time, testresult = test_obj.run_tests(gpi=gpi,
-                                                         tests=['wk','fk'])
-                testresult.update({'status': '0: Testing successful'})
-            except Exception as e:
-                df_time = None
-                testresult = {'status': str(e)}
-
-            save_obj.fill_buffer(gpi, testresult)
-            if iteration == len(grid_points)-1:
-                # The last group of grid points is saved to file, also if the buffer size is not yet reached
-                save_obj.save_to_netcdf()
-
-        # Add Info to log file
-        log_file.add_line('%s: Finished testing for timeframe %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
-                                                                     timeframe))
-        log_file.add_line('Saved results to: HomogeneityTest_%s.csv' % breaktime)
+    filenames = []
+    for i in range(len(breaktimes)):
+        filenames.append(q.get(True))
 
     log_file.add_line('=====================================')
     #Plotting and netcdf files
@@ -120,7 +143,7 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
                                                                                               ncfilename))
         #Create coverage plots
         meta = show_tested_gpis(workfolder, filename)
-        log_file.add_line('%s: Create coverage plots with groups %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
+        log_file.add_line('%s: Create coverage plots with groups %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                                                                         str(meta)))
         #Create plots of test results with statistics
         stats = inhomo_plot_with_stats(workfolder, filename)
@@ -128,7 +151,7 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
                                                                                                  str(i), str(stats)))
     log_file.add_line('=====================================')
     if adjusted_ts_path:
-        log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d%H:%M:%S')))
+        log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         pass
         #Do TS adjutement and save resutls to path
 
@@ -136,9 +159,9 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Fal
 if __name__ == '__main__':
     # Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
     # Testproduct of form cci_*version*_*product*
-    start('cci_31_combined',
+    start('adjusted_cci',
           'merra2',
           r'H:\HomogeneityTesting_data\output',
-          cells=[602], skip_times=None,
-          anomaly=False,
+          cells='Australia', skip_times=None,
+          anomaly=None,
           adjusted_ts_path=None)
