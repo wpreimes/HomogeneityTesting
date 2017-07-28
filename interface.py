@@ -9,23 +9,21 @@ import numpy as np
 import pandas as pd
 import scipy.stats as stats
 from typing import Union
+from pytesmo.time_series.anomaly import calc_anomaly
 
 from datetime import datetime
 
-import scipy.io as io
-
-from general.time_series.anomaly import calc_anomaly
-
-from HomogeneityTesting.otherfunctions import regress, datetime2matlabdn, cci_timeframes
-from HomogeneityTesting.import_satellite_data import QDEGdata_M, QDEGdata_D
-from HomogeneityTesting.import_ismn_data import ISMNdataUSA
+from cci_timeframes import get_timeframes
+from otherfunctions import regress, datetime2matlabdn
+from import_satellite_data import QDEGdata_M, QDEGdata_D
+from import_ismn_data import ISMNdataUSA
 
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
 
 class HomogTest(object):
-    def __init__(self, test_prod, ref_prod, timeframe, breaktime, alpha, anomaly):
-        # type: (str,str,list,str,float,Union(bool,str)) -> None
+    def __init__(self, test_prod, ref_prod, alpha, anomaly):
+        # type: (str,str,float,Union(bool,str)) -> None
         '''
         :param test_prod:
         :param ref_prod:
@@ -36,30 +34,28 @@ class HomogTest(object):
         '''
         self.ref_prod = ref_prod
         self.test_prod = test_prod
-        if breaktime and timeframe.size == 2:
-            self.timeframe = [datetime.strptime(timeframe[0], '%Y-%m-%d'),
-                              datetime.strptime(timeframe[1], '%Y-%m-%d')]
 
-            self.breaktime = datetime.strptime(breaktime, '%Y-%m-%d')
+        test_prod_times = get_timeframes(test_prod, as_datetime=True)
+        self.breaktimes =test_prod_times['breaktimes']
+        self.timeframes = test_prod_times['timeframes']
+        self.range = test_prod_times['ranges']
 
-            if self.ref_prod == 'ISMN-merge':
-                self.data = QDEGdata_M(products=[test_prod])
-                self.ismndata = ISMNdataUSA(self.timeframe, self.breaktime, max_depth=0.1)
-            else:
-                self.data = QDEGdata_M(products=[self.ref_prod, self.test_prod])
-
-        else: # if timeframe and breaktime are None
-            self.timeframe = timeframe
-            self.breaktime = breaktime
-            self.data = QDEGdata_M(products=[self.ref_prod, self.test_prod])
+        '''
+        if self.ref_prod == 'ISMN-merge':
+            self.data = QDEGdata_M(products=[test_prod])
+            self.ismndata = ISMNdataUSA(self.timeframe, self.breaktime, max_depth=0.1)
+        else:
+        '''
+        self.data = QDEGdata_M(products=[self.ref_prod, self.test_prod])
 
         self.alpha = alpha
         self.anomaly = anomaly
-        self.valid_range = self._init_validate_cci_range()
+
+        self._init_validate_cci_range()
 
     def _init_validate_cci_range(self):
-        # type: (None) -> list
-        valid_ranges = cci_timeframes(self.test_prod)['ranges']
+        # TODO: Not needed anymore
+        # type: (None) -> None
         '''
         cci_re = {name: re.compile("%s.+" % name) for name in valid_ranges.keys()}
         if not any([cci_re[version].match(self.test_prod) for version, x in cci_re.iteritems()]):
@@ -69,13 +65,14 @@ class HomogTest(object):
         prefix, version, type = self.test_prod.split('_')
         name = prefix + '_' + version
         '''
-        if not self.timeframe: # for adjustment no timeframes are given
-            return valid_ranges
-        else: # if timeframes are given, do some testing
-            for time in self.timeframe:
-                if not valid_ranges[0] <= time.strftime('%Y-%m-%d') <= valid_ranges[1]:
+        for timeframe in self.timeframes:
+            for startend in timeframe:
+                if not self.range[0] <= startend <= self.range[1]:
                     raise Exception('Selected Timeframe is not valid for product %s' % self.test_prod)
-                return valid_ranges
+        for breaktime in self.breaktimes:
+            if not self.range[0] <= breaktime <= self.range[1]:
+                raise Exception('Selected Breaktimes not valid for product %s' % self.test_prod)
+
 
     @staticmethod
     def wk_test(dataframe, alternative='two-sided'):
@@ -169,50 +166,38 @@ class HomogTest(object):
         #TODO: implement von Neumann test
         pass
 
-    def read_gpi(self, gpi):
+    def read_gpi(self, gpi, start, end):
         # type: (int) -> pd.DataFrame
-        # Observation and reference data
 
-        if not self.timeframe and not self.breaktime:
-            # For adjustment read dara from first to last valid date
-            # TODO: Change this to fit with lower ttime
-            ttime = [datetime.strptime(self.valid_range[0],'%Y-%m-%d'),
-                     None,
-                     datetime.strptime(self.valid_range[1], '%Y-%m-%d')]
-        else:
-            # For break detection data reading
-            ttime = [self.timeframe[0], self.breaktime, self.timeframe[1]]
 
         # Import the test data and reference datasets for the active ground point
         if self.anomaly == 'ccirange':
+            #Calculate the anomaly over the whole CCI version time frame (1978-present)
+            range = [time.strftime('%Y-%m-%d') for time in self.range]
+            try:
+                df_time = (self.data).read_gpi(gpi, range[0], range[1])
+                df_time = df_time / 100  # type: pd.DataFrame
+                df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
+                df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
+            except:
+                raise Exception('9: Could not import data for gpi %i' % gpi)
+
             if self.ref_prod == 'ISMN-merge':
                 print('CCI range anomaly wont work with ISMN data')
-                raise Exception('CCI range anomaly wont work with ISMN data')
-            else:
-                try:
-                    df_time = (self.data).read_gpi(gpi, self.valid_range[0], self.valid_range[1])
-                    df_time = df_time / 100  # type: pd.DataFrame
-                    df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
-                    df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
-                    df_time = df_time.loc[ttime[0].strftime('%Y-%m-%d'):ttime[2].strftime('%Y-%m-%d')]
-                except:
-                    raise Exception('9: Could not import data for gpi %i' % gpi)
+
         else:
             try:
                 if self.ref_prod == 'ISMN-merge':
-                    df_time = self.data.read_gpi(gpi, ttime[0].strftime('%Y-%m-%d'), ttime[2].strftime('%Y-%m-%d'))
+                    df_time = self.data.read_gpi(gpi, start, end)
 
                     df_time = df_time / 100  # type: pd.DataFrame
 
                     df_time['ISMN-merge'] = self.ismndata.merge_stations_around_gpi(gpi, df_time[self.test_prod])
                 else:
-                    df_time = self.data.read_gpi(gpi,
-                                                 ttime[0].strftime('%Y-%m-%d'),
-                                                 ttime[2].strftime('%Y-%m-%d'))
+                    df_time = self.data.read_gpi(gpi, start, end)
                     df_time = df_time / 100
 
                 if self.anomaly == 'timeframe':
-                    # TODO: Gapfill verwenden? Vorteile? Nachteile?
                     df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
                     df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
             except:
@@ -222,48 +207,40 @@ class HomogTest(object):
                                           self.test_prod: 'testdata'})
 
         # Drop days where either dataset is missing
-        return df_time.dropna()
+        return df_time
 
-    def run_tests(self, gpi, tests):
-        # type: (int, np.array) -> (pd.DataFrame, dict)
-
-        # Minimale Länge der zu testenden Datenserie
-        # TODO: choose larger threshold?
-        min_data_size = 3
-
-        df_time = self.read_gpi(gpi)
+    def run_tests(self, data, breaktime, min_data_size, tests):
+        # type: (pd.DataFrame, datetime, int, np.array) -> (pd.DataFrame, dict)
 
         # Check if any data is left for testdata and reference data
-        if df_time.isnull().all().refdata or df_time.isnull().all().testdata:
+        if data.isnull().all().refdata or data.isnull().all().testdata:
             raise Exception('1: No coinciding data for the selected timeframe')
 
         # Check if lengths of remaining datasets equal
-        if df_time['refdata'].index.size != df_time['testdata'].index.size:
+        if data['refdata'].index.size != data['testdata'].index.size:
             raise Exception('2: Test timeseries and reference timeseries do not match')
 
-        # TODO: Check if Dataseries coincide in time
-
         # Calculation of Spearman-Correlation coefficient
-        corr, pval = stats.spearmanr(df_time['testdata'], df_time['refdata'])
+        corr, pval = stats.spearmanr(data['testdata'], data['refdata'], nan_policy='omit')  #TODO: omit or propagate?
 
-        # Check the rank correlation so that correlation is positive and significant at 0.05
-        if not (corr > 0 and pval < 0.01):
+        # Check the rank correlation so that correlation is positive and significant
+        if not (corr > 0 and pval < 0.01): #TODO: stricter thresholds?
             raise Exception('3: Spearman correlation failed with correlation %f \ '
                             '(must be >0)and pval %f (must be <0.01)' % (corr, pval))
 
         # Relative Test
         # Divide Time Series into subgroubs according to timeframe and breaktime
-        df_time['group'] = np.nan
+        data['group'] = np.nan
 
-        i1 = df_time.loc[self.timeframe[0]:self.breaktime]
-        i2 = df_time.loc[self.breaktime + pd.DateOffset(1):self.timeframe[1]]
+        i1 = data.loc[:breaktime]
+        i2 = data.loc[breaktime + pd.DateOffset(1):]
 
-        df_time.loc[i1.index, 'group'] = 0
-        df_time.loc[i2.index, 'group'] = 1
+        data.loc[i1.index, 'group'] = 0
+        data.loc[i2.index, 'group'] = 1
         ni1 = len(i1.index)
         ni2 = len(i2.index)
 
-        df_time = df_time.dropna()
+        df_time = data.dropna() #TODO: again?
 
         # Check if group data sizes are above selected minimum size
         if ni1 < min_data_size or ni2 < min_data_size:
@@ -273,7 +250,7 @@ class HomogTest(object):
         df_time['bias_corr_refdata'], rxy, pval, ress = regress(df_time)
 
         if any(np.isnan(ress)):
-            raise Exception('5: Negative or NaN correlation')
+            raise Exception('5: Negative or NaN correlation after refdata correction')
 
         # Calculate difference TimeSeries
         df_time['Q'] = df_time.testdata - df_time.bias_corr_refdata
@@ -309,32 +286,3 @@ class HomogTest(object):
             raise Exception('6: WK test and FK test failed')
 
         return df_time, {'wilkoxon': wilkoxon, 'fligner_killeen': fligner_killeen}
-
-    def save_as_mat(self, gpi):
-        # type: (int) -> None
-        # Saves the SM data for the active time frame for the selected gpi as .mat
-
-        print('Exporting Testdata and Referencedata to .mat')
-        exp_data = self.data.read_gpi(gpi,
-                                      self.timeframe[0].strftime('%Y-%m-%d'),
-                                      self.timeframe[1].strftime('%Y-%m-%d'))
-        exp_data = exp_data / 100  # type: pd.DataFrame
-
-        matdate = []
-        for dt in exp_data[self.test_prod].index:
-            matdate.append(datetime2matlabdn(dt))
-
-        x = {'tspan': matdate,
-             'sm': exp_data[self.ref_prod].values}
-
-        y = {'tspan': matdate,
-             'sm': exp_data[self.test_prod].values}
-
-        timeframe = [datetime2matlabdn(self.timeframe[0]),
-                     datetime2matlabdn(self.timeframe[1])]
-
-        breaktime = datetime2matlabdn(self.breaktime)
-
-        data_dict = {'X': x, 'Y': y, 'timeframe': timeframe, 'breaktime': breaktime}
-        io.savemat('matlab_data\SMdata_' + str(gpi) + breaktime.strftime('%Y-%m-%d'),
-                   data_dict, oned_as='column')

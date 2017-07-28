@@ -10,7 +10,8 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from netCDF4 import date2num
-
+from scipy import io
+import os
 from datetime import datetime
 
 
@@ -64,6 +65,43 @@ def dt_to_dec(dt):
     endyear = startyear.replace(year=dt.year + 1)
     return dt.year + ((dt - startyear).total_seconds() / float((endyear - startyear).total_seconds()))
 
+
+def save_as_mat(path, gpi, test_prod, ref_prod, anomaly, timeframe):
+    from interface import HomogTest
+    # type: (int) -> None
+
+    #Saves the SM data for active timeframe for testproduct and refproduct to the selected path
+    # format: *gpi*.mat
+
+
+    test_obj = HomogTest(test_prod,
+                         ref_prod,
+                         0.01,
+                         anomaly)
+
+    print('Exporting Testdata and Referencedata to .mat')
+    exp_data = test_obj.read_gpi(gpi,
+                                 test_obj.range[0],
+                                 test_obj.range[1]) # type: pd.DataFrame
+    exp_data = exp_data / 100
+
+    matdate = []
+    for dt in exp_data['refdata'].index:
+        matdate.append(datetime2matlabdn(dt))
+
+    x = {'tspan': matdate,
+         'sm': exp_data['refdata'].values}
+
+    y = {'tspan': matdate,
+         'sm': exp_data['testdata'].values}
+
+    timeframe = [datetime2matlabdn(timeframe[0]),
+                 datetime2matlabdn(timeframe[1])]
+
+
+    data_dict = {'X': x, 'Y': y, 'timeframe': timeframe}
+    io.savemat(os.path.join(path, str(gpi)),
+               data_dict, oned_as='column')
 
 def fill_holes_lress(fill_series, other_series):
     '''
@@ -134,82 +172,4 @@ def merge_ts(dataframe):
         # Else perform interpolation from linear regression
         merged_ts = fill_holes_lress(max_series, other_series_merged)
         return merged_ts
-
-def cci_timeframes(product, skip_times=None):
-    # TODO: Add timeframes for active and passive products for 22 and 33
-    # TODO: Check timeframe and breaktimes for CCI33
-
-    #Order matters!!!!
-    timeframes = {'cci_22_combined': np.array(
-                                      [['2011-10-01', '2014-12-31'], ['2007-01-01', '2012-07-01'],
-                                       ['2002-07-01', '2011-10-01'], ['1998-01-01', '2007-01-01'],
-                                       ['1991-08-01', '2002-07-01'], ['1987-07-01', '1998-01-01']]),
-                  'cci_31_combined': np.array(
-                                      [['2011-10-01', '2015-05-01'], ['2010-07-01', '2012-07-01'],
-                                       ['2007-10-01', '2011-10-01'], ['2007-01-01', '2010-07-01'],
-                                       ['2002-07-01', '2007-10-01'], ['1998-01-01', '2007-01-01'],
-                                       ['1991-08-01', '2002-07-01'], ['1987-09-01', '1998-01-01']]),
-                  'cci_31_passive': np.array(
-                                     [['2012-07-01', '2015-12-31'], ['2011-10-01', '2015-05-01'],
-                                      ['2010-07-01', '2012-07-01'], ['2007-10-01', '2011-10-01'],
-                                      ['2002-07-01', '2010-07-01'], ['1998-01-01', '2007-10-01'],
-                                      ['1987-09-01', '2002-07-01']]),
-                  'cci_31_active': np.array(
-                                     [['2007-01-01', '2015-12-01'], ['2003-02-01', '2012-11-01'],
-                                      ['1997-05-01', '2007-01-01'], ['1991-08-01', '2003-02-01']]),
-                  'cci_33_combined': np.array(
-                                     [['2012-07-01', '2016-12-31'], ['2011-10-01', '2015-05-01'],
-                                      ['2010-07-01', '2012-07-01'], ['2007-10-01', '2011-10-01'],
-                                      ['2007-01-01', '2010-07-01'], ['2002-07-01', '2007-10-01'],
-                                      ['1998-01-01', '2007-01-01'], ['1991-08-01', '2002-07-01'],
-                                      ['1987-09-01', '1998-01-01']])
-               }
-
-    breaktimes = {'cci_22_combined': np.array(
-                                      ['2012-07-01', '2011-10-01', '2007-01-01', '2002-07-01', '1998-01-01',
-                                       '1991-08-01']),
-                  'cci_31_combined': np.array(
-                                      ['2012-07-01', '2011-10-01', '2010-07-01', '2007-10-01', '2007-01-01',
-                                       '2002-07-01', '1998-01-01', '1991-08-01']),
-                  'cci_31_passive': np.array(
-                                      ['2015-05-01', '2012-07-01', '2011-10-01', '2010-07-01', '2007-10-01',
-                                       '2002-07-01', '1998-01-01']),
-                  'cci_31_active': np.array(['2012-11-01', '2007-01-01', '2003-02-01', '1997-05-01']),
-                  'cci_33_combined': np.array(
-                                      ['2015-05-01', '2012-07-01', '2011-10-01', '2010-07-01', '2007-10-01',
-                                       '2007-01-01', '2002-07-01', '1998-01-01', '1991-08-01'])
-                }
-
-
-    ranges = {'cci_22_combined': ['1980-01-01', '2014-12-31'],
-              'cci_31_combined': ['1980-01-01', '2015-12-31'],
-              'cci_31_passive': ['1980-01-01', '2015-12-31'],
-              'cci_31_active': ['1991-08-01', '2015-12-31'],
-              'cci_32_combined': ['1980-01-01', '2015-12-31'],
-              'cci_33_combined': ['1980-01-01', '2016-12-31']
-              }
-
-    # TODO: Delete [+4]!!
-    timeframes['adjusted_cci']=timeframes['cci_31_combined']
-    ranges['adjusted_cci'] = ranges['cci_31_combined']
-    breaktimes['adjusted_cci'] = breaktimes['cci_31_combined']
-    #---------------------
-
-
-    if product not in timeframes.keys() or product not in breaktimes.keys() or product not in ranges.keys():
-        raise Exception('No test times for selected cci product')
-    return_timeframes = timeframes[product]
-    return_breaktimes = breaktimes[product]
-    return_ranges = ranges[product]
-
-    if return_timeframes.shape[0] != return_breaktimes.size:
-        raise Exception('Number of timeframes %i and breaktimes %i not equal' % (return_timeframes.size,
-                                                                                 return_breaktimes.size))
-
-    if skip_times:
-        return_timeframes = np.array([return_timeframes[i] for i in range(return_timeframes.shape[0]) if i not in skip_times])
-        return_breaktimes = np.array([return_breaktimes[i] for i in range(return_breaktimes.size) if i not in skip_times])
-
-
-    return {'breaktimes': return_breaktimes, 'timeframes': return_timeframes, 'ranges': return_ranges}
 

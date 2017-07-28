@@ -106,7 +106,7 @@ class SaveResults(object):
                 'Description': 'Homogeneity Testing Status',
                 'Values':
     '0 = Processing OK, 1 = No coinciding data for timeframe, 2 = Test TS and Ref TS do not match,\
-    3 = Spearman correlation failed, 4 = Minimum Dataseries Length not reached, 5 = Negative or NaN correlation,\
+    3 = Spearman correlation too low, 4 = Minimum Dataseries Length not reached, 5 = neg/nan correl. aft. bias corr.,\
     6 = Error during WK testing, 7 = Error during FK testing, 8 = WK test and FK test failed, 9 = Error reading gpi'
                         }
                         }

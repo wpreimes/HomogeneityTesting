@@ -8,8 +8,8 @@ Created on Tue Dec 23 10:42:39 2016
 import numpy as np
 import pandas as pd
 from rsdata.ESA_CCI_SM.interface import ESA_CCI_SM
-from HomogeneityTesting.otherfunctions import regress
-from general.timedate.julian import caldat
+from otherfunctions import regress
+from pytesmo.timedate.julian import caldat
 
 from gldas.interface import GLDASTs
 from merra.interface import MERRA2_Ts
@@ -17,8 +17,8 @@ from merra.interface import MERRA2_Ts
 import os
 from datetime import datetime
 from pygeogrids.netcdf import load_grid
-from HomogeneityTesting.otherfunctions import merge_ts, regress
-from HomogeneityTesting.read_adjusted_ts import cciAdjustedTs
+from otherfunctions import merge_ts, regress
+from read_adjusted_ts import cciAdjustedTs
 import re
 
 
@@ -94,6 +94,11 @@ class QDEGdata_M(object):
     def read_gpi(self, gpi, startdate, enddate):
 
         # Read sub-monthly data
+        if isinstance(startdate, datetime):
+            startdate = str(startdate)
+        if isinstance(enddate, datetime):
+            enddate = str(enddate)
+
         if not self.m_otherdata:
             data_group = pd.DataFrame()
         else:
@@ -241,7 +246,10 @@ class QDEGdata_D(object):
         products : *list
             one or multiple products ('gldas', 'trmm')
         """
-
+        if isinstance(startdate, datetime):
+            startdate = str(startdate)
+        if isinstance(enddate, datetime):
+            enddate = str(enddate)
         # Read and resample hour data
         if not self.d_otherdata:
             data_group = pd.DataFrame(index=pd.date_range(startdate, enddate, freq='D'))
@@ -332,7 +340,10 @@ class QDEGdata_3H(object):
                 self.H3products['gldas_v21'] = GLDASTs(path_gldasv21)
 
     def read_gpi(self, gpi, startdate, enddate):
-
+        if isinstance(startdate, datetime):
+            startdate = str(startdate)
+        if isinstance(enddate, datetime):
+            enddate = str(enddate)
         data_group = pd.DataFrame()
 
         if 'gldas_v1' in self.H3products.keys():
@@ -405,19 +416,14 @@ class QDEGdata_3H(object):
 
         return data_group[startdate:enddate]
 
-'''
-from HomogeneityTesting.grid_functions import cells_for_continent
 
-grid = load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
-cells = cells_for_continent('Australia')
-timeframe = ['1990-07-01', '2014-10-01']
+from grid_functions import cells_for_continent
+gpi = 903676
+timeframe = [datetime(2009,1,1), datetime(2014,10,01)]
 data = QDEGdata_M(products=['adjusted_cci', 'merra2', 'cci_31_combined'])
-for cell in [2246,2247,2282]:
-    for i, gpi in enumerate(grid.grid_points_for_cell(cell)[0]):
-        ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
-        bias_corr_refdata, rxy, pval, ress = regress(
-            ts[['adjusted_cci', 'merra2']].rename(columns={'adjusted_cci': 'testdata', 'merra2': 'refdata'}))
-        ts['merra2'] = bias_corr_refdata
-        print ts
-        print i, gpi, grid.grid_points_for_cell(cell)[0].size  # 440459
-'''
+ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
+bias_corr_refdata, rxy, pval, ress = regress(
+    ts[['adjusted_cci', 'merra2']].rename(columns={'adjusted_cci': 'testdata', 'merra2': 'refdata'}))
+ts['merra2'] = bias_corr_refdata
+print ts
+

@@ -14,12 +14,12 @@ from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 
-from HomogeneityTesting.import_satellite_data import QDEGdata_M
-from HomogeneityTesting.points_to_netcdf import globalCellgrid, points_to_netcdf
-from HomogeneityTesting.otherfunctions import regress
-from HomogeneityTesting.longest_homogeneous_period import calc_longest_homogeneous_period
-from HomogeneityTesting.save_data import load_Log
-from HomogeneityTesting.nlcmap import nlcmap
+from import_satellite_data import QDEGdata_M
+from points_to_netcdf import globalCellgrid, points_to_netcdf
+from otherfunctions import regress
+from longest_homogeneous_period import calc_longest_homogeneous_period
+from save_data import load_Log
+from nlcmap import nlcmap
 
 from scipy import stats
 

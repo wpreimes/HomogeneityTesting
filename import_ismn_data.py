@@ -13,7 +13,7 @@ import os
 from pygeogrids.netcdf import load_grid
 import pytesmo.io.ismn.interface as ismn
 import pickle
-from HomogeneityTesting.otherfunctions import merge_ts, regress
+from otherfunctions import merge_ts, regress
 
 
 class ISMNdataUSA(object):

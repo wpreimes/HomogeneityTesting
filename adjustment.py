@@ -4,9 +4,6 @@ Created on Thu Jun 08 10:16:42 2017
 
 @author: wpreimes
 """
-import sys
-sys.path.append(r"H:\workspace")
-
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -16,19 +13,19 @@ from datetime import datetime, timedelta
 from pynetcf.time_series import GriddedNcIndexedRaggedTs
 from pynetcf.point_data import GriddedPointData
 from points_to_netcdf import points_to_netcdf
-from sklearn import linear_model
 from otherfunctions import dates_to_num, regress
 from interface import HomogTest
-from otherfunctions import cci_timeframes
+from cci_timeframes import get_timeframes
 from points_to_netcdf import pd_from_2Dnetcdf, create_cellfile_name
 from grid_functions import cells_for_continent
 
 
-class Adjust(HomogTest):
-    def __init__(self, workdir, test_prod, ref_prod, anomaly):
-        HomogTest.__init__(self, test_prod, ref_prod, None, None, None, anomaly)
-        self.workdir = workdir
-        mergetimes = cci_timeframes(self.test_prod)
+class Adjustment(object):
+    def __init__(self, datadir):
+        self.datadir = datadir
+
+
+        mergetimes = get_timeframes(self.test_prod)
         self.breaktimes = mergetimes['breaktimes'][::-1]
         self.timeframes = mergetimes['timeframes'][::-1]
         test_results = self._init_import_test_results()
@@ -62,67 +59,7 @@ class Adjust(HomogTest):
         adjustment_times[timeframes[-1][-1]] = 99  # Timeframes are special
         return adjustment_times
 
-    def regression_adjustment(self, dataframe, breaktime, return_whole=False):
 
-        i1 = dataframe[:breaktime]
-        i2 = dataframe[breaktime + pd.DateOffset(1):]
-
-        B = []
-        rval = []
-        pval = []
-        for data in [i1, i2]:
-            refdata = np.stack((np.ones(data['refdata'].values.size), data['refdata'].values))
-            testdata = data['testdata'].values
-            b = np.dot(np.linalg.inv(np.asmatrix(np.dot(refdata, np.transpose(refdata)))),
-                       np.matrix.transpose(np.asmatrix(np.dot(refdata, testdata))))
-            B.append(b)
-            r, p = stats.pearsonr(refdata[1], testdata)
-            rval.append(r)
-            pval.append(p)
-
-        B = np.squeeze(np.asarray(B))
-
-        regtest = {'R': rval, 'p': pval}
-        # print('Regression coefficients are: ' + str(regtest))
-
-        if any(r < 0 for r in rval):
-            raise Exception('1: negative correlation found, adjustment NOT performed')
-        if any(p > 0.05 for p in pval):
-            raise Exception('2: positive correlation not significant, adjustment NOT performed')
-
-        # Perform the linear adjustment for testdata after the breaktime
-        # cc = B[0][1] / B[1][1]
-        # dd = B[0][0] - cc * B[1][0]
-        # Perform the linear adjustment for testdata before the breaktime
-        # TODO: Is this correct??
-        cc = B[1][1] / B[0][1]
-        dd = B[1][0] - cc * B[0][0]
-        # adjusted_part1 = dataframe[['testdata']][:breaktime]
-        # adjusted_part2 = cc * dataframe[['testdata']][breaktime:] + dd
-        adjusted_part1 = cc * dataframe[['testdata']][:breaktime] + dd
-        adjusted_part2 = dataframe[['testdata']][breaktime:]
-
-        #TODO: Test adjustment
-
-        dataframe['adjust'] = pd.concat([adjusted_part1, adjusted_part2])
-        # dataframe['adjusted'] = dataframe.adjust[breaktime:]
-        if return_whole:
-            adjusted = dataframe.adjust
-            self.regression_adjustment(dataframe, breaktime)
-            # dataframe['adjusted'] = dataframe.adjust
-        else:
-            adjusted = dataframe.adjust[:breaktime]
-            # dataframe['adjusted'] = dataframe.adjust[:breaktime]
-        adj_setting = {'status': '0: adjustment performed',
-                       'slope': cc, 'intercept': dd, 'model': B}
-        '''
-        print 'Adjustment was performed using the following parameters:'
-        print 'Slope: %f' %adj_setting['slope']
-        print 'Intercept: %f' %adj_setting['intercept']
-        print 'Model: {0} and {1}'.format(adj_setting['model'][0],adj_setting['model'][1])
-        '''
-        del dataframe
-        return adj_setting, adjusted
 
     def adjust_ts(self, gpi):
         # Perform adjustment of Timeseries AFTER breaktime (if inhomogeneity exists data AFTER the breaktime
@@ -210,7 +147,7 @@ class Adjust(HomogTest):
 
 def run_adjustment():
 
-    adjust_obj = Adjust(r"H:\HomogeneityTesting_data\output\CCI31EGU",
+    adjust_obj = Adjustment(r"H:\HomogeneityTesting_data\output\CCI31EGU",
                         'adjusted_cci',
                         'merra2',
                         0.1)
@@ -315,6 +252,69 @@ def run_adjustment():
         loc_ids = adjusted_ts_data.columns.values
         write_gpis_to_file(data, dates, loc_ids, adjusted_data_path, str(cell) + '.nc')
         '''
+
+def regression_adjustment(dataframe, breaktime, adjust_part='first', return_part='all'):
+
+
+    i1 = dataframe[:breaktime]
+    i2 = dataframe[breaktime + pd.DateOffset(1):]
+
+    B = []
+    rval = []
+    pval = []
+    for data in [i1, i2]:
+        refdata = np.stack((np.ones(data['refdata'].values.size), data['refdata'].values))
+        testdata = data['testdata'].values
+        b = np.dot(np.linalg.inv(np.asmatrix(np.dot(refdata, np.transpose(refdata)))),
+                   np.matrix.transpose(np.asmatrix(np.dot(refdata, testdata))))
+        B.append(b)
+        r, p = stats.pearsonr(refdata[1], testdata)
+        rval.append(r)
+        pval.append(p)
+
+    B = np.squeeze(np.asarray(B))
+
+    regtest = {'R': rval, 'p': pval}
+    # print('Regression coefficients are: ' + str(regtest))
+
+    if any(r < 0 for r in rval):
+        raise Exception('1: negative correlation found, adjustment NOT performed')
+    if any(p > 0.05 for p in pval):
+        raise Exception('2: positive correlation not significant, adjustment NOT performed')
+
+    if adjust_part == 'last':
+        # Perform the linear adjustment for testdata after the breaktime
+        cc = B[0][1] / B[1][1]
+        dd = B[0][0] - cc * B[1][0]
+        adjusted_part1 = dataframe[['testdata']][:breaktime]
+        adjusted_part2 = cc * dataframe[['testdata']][breaktime:] + dd
+    elif adjust_part == 'first':
+        # Perform the linear adjustment for testdata before the breaktime
+        # TODO: Is this correct??
+        cc = B[1][1] / B[0][1]
+        dd = B[1][0] - cc * B[0][0]
+        adjusted_part1 = cc * dataframe[['testdata']][:breaktime] + dd
+        adjusted_part2 = dataframe[['testdata']][breaktime:]
+    else:
+        raise Exception("Select 'first' or 'last' for part to adjust" )
+    #TODO: Test adjustment
+    adj_setting = {'status': '0: adjustment performed',
+                   'slope': cc, 'intercept': dd, 'model': B}
+
+    dataframe['adjust'] = pd.concat([adjusted_part1, adjusted_part2])
+    # dataframe['adjusted'] = dataframe.adjust[breaktime:]
+    if return_part == 'all':
+        return dataframe.adjust
+        #self.regression_adjustment(dataframe, breaktime)
+        # dataframe['adjusted'] = dataframe.adjust
+    elif return_part == 'last':
+        return dataframe.adjust[:breaktime]
+        # dataframe['adjusted'] = dataframe.adjust[:breaktime]
+    elif return_part == 'first':
+        return dataframe.adjust[breaktime:]
+    else:
+        raise Exception("Select 'first' , 'last' or 'all' for part to return")
+
 
 
 #run_adjustment()
