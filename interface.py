@@ -78,13 +78,14 @@ class HomogTest(object):
     def wk_test(dataframe, alternative='two-sided'):
         # type: (pd.DataFrame, str) -> (float,dict)
 
-        p_wk = stats.mannwhitneyu(dataframe['Q'].loc[dataframe['group'] == 0],
-                                  dataframe['Q'].loc[dataframe['group'] == 1],
-                                  alternative=alternative)[1]
+        T_wk, p_wk = stats.mannwhitneyu(dataframe['Q'].loc[dataframe['group'] == 0],
+                                        dataframe['Q'].loc[dataframe['group'] == 1],
+                                        alternative=alternative)[1]
         stats_wk = stats.ranksums(dataframe['Q'].loc[dataframe['group'] == 0],
                                   dataframe['Q'].loc[dataframe['group'] == 1])[0]
+        
 
-        return p_wk, stats_wk
+        return p_wk, T_wk, stats_wk
 
     @staticmethod
     def fk_test(dataframe, mode='median', alpha=0):
@@ -258,14 +259,14 @@ class HomogTest(object):
         # Wilcoxon rank sum test
         if 'wk' in tests:
             try:
-                p_wk, stats_wk = self.wk_test(df_time, 'two-sided')
+                p_wk, T_wk, stats_wk = self.wk_test(df_time, 'two-sided')
 
                 if p_wk < self.alpha:
                     h_wk = 1
                 else:
                     h_wk = 0
 
-                wilkoxon = {'h': h_wk, 'zval': stats_wk, 'p': p_wk}
+                wilkoxon = {'h': h_wk, 'zval': stats_wk, 'T': T_wk, 'p': p_wk}
             except:
                 wilkoxon = {'h': 'Error during WK testing'}
                 pass
