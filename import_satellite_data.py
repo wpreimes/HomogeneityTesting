@@ -115,7 +115,8 @@ class QDEGdata_M(object):
 
             if (len(np.where(~np.isnan(ts_gldas_merged))[0]) == 0):
                 # raise Exception, 'No GLDAS Data available for GPI %i' %gpi
-                print 'No merged gldas data for gpi %0i' % gpi
+                #print 'No merged gldas data for gpi %0i' % gpi
+                pass
             else:
                 ts_gldas_merged = ts_gldas_merged.rename(columns={'SoilMoi0_10cm_inst': 'gldas-merged-from-file'})
 
@@ -140,8 +141,8 @@ class QDEGdata_M(object):
 
             if ts_adjusted_cci.isnull().all():
                 # raise Exception, 'No GLDAS Data available for GPI %i' %gpi
-                print 'No adjusted cci data for gpi %0i' % gpi
-
+                # print 'No adjusted cci data for gpi %0i' % gpi
+                pass
             ts_adjusted_cci.index = ts_adjusted_cci.index.to_datetime().date
             ts_adjusted_cci.index = ts_adjusted_cci.index.to_datetime()
 
@@ -161,8 +162,8 @@ class QDEGdata_M(object):
                 ts_merra2 = ts_merra2.resample('M').mean()
 
             if ts_merra2.isnull().all():
-                print 'No merra2 data for gpi %i' % gpi
-
+                # print 'No merra2 data for gpi %i' % gpi
+                pass
             ts_merra2.index = ts_merra2.index.to_datetime().date
             ts_merra2.index = ts_merra2.index.to_datetime()
 
@@ -279,8 +280,8 @@ class QDEGdata_D(object):
                 df_cci['sm'] = pd.Series(index=pd.date_range(start=startdate, end=enddate))
 
             if df_cci['sm'].isnull().all():
-                print 'No cci sm data for gpi %0i' % gpi
-
+                # print 'No cci sm data for gpi %0i' % gpi
+                pass
             if data_group.empty:
                 if self.only_sm:
                     data_group['%s' % name] = df_cci['sm']
@@ -299,8 +300,8 @@ class QDEGdata_D(object):
             except:
                 ts_trmm = pd.Series(index=pd.date_range(start=startdate, end=enddate))
             if ts_trmm.isnull().all():
-                print 'No trmm data for gpi %0i' % gpi
-
+                # print 'No trmm data for gpi %0i' % gpi
+                pass
             ts_trmm.index = ts_trmm.index.to_datetime().date
 
             if data_group.empty:
@@ -354,8 +355,8 @@ class QDEGdata_3H(object):
 
             if (len(np.where(~np.isnan(ts_gldas_v1))[0]) == 0):
                 # raise Exception, 'No GLDAS Data available for GPI %i' %gpi
-                print 'No gldas v1 data for gpi %0i' % gpi
-
+                # print 'No gldas v1 data for gpi %0i' % gpi
+                pass
             if data_group.empty:
                 data_group['gldas_v1'] = ts_gldas_v1
             else:
@@ -369,8 +370,8 @@ class QDEGdata_3H(object):
 
             if (len(np.where(~np.isnan(ts_gldas_v2))[0]) == 0):
                 # raise Exception, 'No GLDAS Data available for GPI %i' %gpi
-                print 'No gldas v1 data for gpi %0i' % gpi
-
+                # print 'No gldas v1 data for gpi %0i' % gpi
+                pass
             if data_group.empty:
                 data_group['gldas_v2'] = ts_gldas_v2
             else:
@@ -384,8 +385,8 @@ class QDEGdata_3H(object):
 
             if (len(np.where(~np.isnan(ts_gldas_v21))[0]) == 0):
                 # raise Exception, 'No GLDAS Data available for GPI %i' %gpi
-                print 'No gldas v1 data for gpi %0i' % gpi
-
+                # print 'No gldas v1 data for gpi %0i' % gpi
+                pass
             if data_group.empty:
                 data_group['gldas_21'] = ts_gldas_v21
             else:
@@ -400,7 +401,7 @@ class QDEGdata_3H(object):
                 ts_gldas_v21 = pd.Series(index=pd.date_range(start=startdate, end=enddate))
 
             if (len(np.where(~np.isnan(ts_gldas_v2))[0]) == 0) or (len(np.where(~np.isnan(ts_gldas_v21))[0]) == 0):
-                print 'No gldas v2 or v21 data for gpi %0i' % gpi
+                # print 'No gldas v2 or v21 data for gpi %0i' % gpi
                 df_gldas_merged = pd.DataFrame(index=pd.date_range(start=startdate, end=enddate, freq='3H'),
                                                data={'gldas-merged': np.nan})
             else:
@@ -416,7 +417,7 @@ class QDEGdata_3H(object):
 
         return data_group[startdate:enddate]
 
-
+'''
 from grid_functions import cells_for_continent
 gpi = 903676
 timeframe = [datetime(2009,1,1), datetime(2014,10,01)]
@@ -426,4 +427,4 @@ bias_corr_refdata, rxy, pval, ress = regress(
     ts[['adjusted_cci', 'merra2']].rename(columns={'adjusted_cci': 'testdata', 'merra2': 'refdata'}))
 ts['merra2'] = bias_corr_refdata
 print ts
-
+'''

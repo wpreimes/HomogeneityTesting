@@ -114,7 +114,7 @@ def pd_from_2Dnetcdf(filename, grid='global'):
 def update_loc_var(ncfile, data, name, grid, idx):
     if name in ncfile.variables.keys():
         contt = ncfile.variables[name][:]
-        if idx != None:
+        if isinstance(idx,np.ma.MaskedArray):
             if contt.ndim == 2:
                 x, y = get2Dpos(idx, grid[0], grid[1])
                 contt[x, y] = data
@@ -172,7 +172,6 @@ def points_to_netcdf(dataframe,
     ----------
     dataframe (mandatory): pandas data frame or data series
         pandas object with data for writing to file
-        for time series data: date time as index
         for spatial data: gpi as index
     path (mandatory): string
         path where netcdf file is saved to
@@ -241,7 +240,7 @@ def points_to_netcdf(dataframe,
         # GPI, LAT, LON werden beim erstellen immer gefüllt je nach grid unabhängig vom GPI
         # Statt None: gpi_index: Nur für den prozessierten gpi werden idx,lat,lon ins file gespeichert
         meta = {'long_name': 'Location Index', 'standard_name': 'GPI', 'valid_range': '[0 Grid Dependant'}
-        update_loc_var(ncfile, locations, u'location_id', grid, pos)
+        update_loc_var(ncfile, locations, u'location_id', grid, None)
         meta = {'units': 'degrees_east', 'long_name': 'location longitude', 'standard_name': 'longitude',
                 'valid_range': '[-180. 180.]'}
         update_loc_var(ncfile, longitudes, u'lon', grid, None)
@@ -271,5 +270,7 @@ def points_to_netcdf(dataframe,
     ncfile.close()
 
 
-#dataframe = pd_from_2Dnetcdf(r"H:\HomogeneityTesting_data\output\CCI31EGU\HomogeneityTest_merra2_2007-10-01.nc", grid="global")
-#points_to_netcdf(dataframe[['test_results']],r'H:\HomogeneityTesting_data\output\CCI31EGU',None,'test',None,None)
+
+if __name__ == "__main__":
+    dataframe = pd_from_2Dnetcdf(r"H:\HomogeneityTesting_data\output\CCI31EGU\HomogeneityTest_merra2_2007-10-01.nc", grid="global")
+    points_to_netcdf(dataframe[['test_results']],r'H:\HomogeneityTesting_data\output\CCI31EGU',None,'test',None,None)

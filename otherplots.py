@@ -201,7 +201,7 @@ def compare_RTM_RTG(workdir, model_prod):
 '''
 
 
-def show_tested_gpis(workdir, filename):
+def show_tested_gpis(workdir, filename, breaktime):
     '''
     Calculate spatial plots for the areas where Homogeneity Tests were (not)
     performed

@@ -14,7 +14,8 @@ from points_to_netcdf import pd_from_2Dnetcdf, points_to_netcdf
 from save_data import load_Log
 import re
 from datetime import datetime
-from HomogeneityTesting.otherfunctions import cci_timeframes, dt_to_dec
+from otherfunctions import dt_to_dec
+from cci_timeframes import get_timeframes
 from typing import Union
 
 def calc_longest_homogeneous_period(workdir, create_netcdf=True):
@@ -34,7 +35,7 @@ def calc_longest_homogeneous_period(workdir, create_netcdf=True):
     ref_prod = products['ref_prod']
     test_prod = products['test_prod']
 
-    mergetimes = cci_timeframes(test_prod)
+    mergetimes = get_timeframes(test_prod)
     breaktimes = mergetimes['breaktimes']
 
     dates = [datetime.strptime(ts, "%Y-%m-%d") for ts in breaktimes]

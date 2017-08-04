@@ -253,9 +253,24 @@ def run_adjustment():
         write_gpis_to_file(data, dates, loc_ids, adjusted_data_path, str(cell) + '.nc')
         '''
 
-def regression_adjustment(dataframe, breaktime, adjust_part='first', return_part='all'):
 
-
+def regression_adjustment(self, data, breaktime, adjust_part='first', return_part='all', test_adjusted=True):
+    '''
+    :param data: pd.DataFrame
+        from Homogeneity Testing, must not contain nan
+    :param breaktime: string or datetime
+    :param adjust_part: string
+        'first' to adjust values BEFORE break time
+        'last' to adjust values AFTER break time
+    :param return_part: string
+        'all' to return adjusted dataframe over whole time frame
+        'first' to return only data before breaktime
+        'last' to return only data after breaktime
+    :param test_adjustment: bool
+        'True' to re-test adjusted data for breaks
+    :return: pd.DataFrame, dict
+    '''
+    dataframe = data
     i1 = dataframe[:breaktime]
     i2 = dataframe[breaktime + pd.DateOffset(1):]
 
@@ -278,9 +293,9 @@ def regression_adjustment(dataframe, breaktime, adjust_part='first', return_part
     # print('Regression coefficients are: ' + str(regtest))
 
     if any(r < 0 for r in rval):
-        raise Exception('1: negative correlation found, adjustment NOT performed')
+        raise Exception('2: negative correlation found, adjustment NOT performed')
     if any(p > 0.05 for p in pval):
-        raise Exception('2: positive correlation not significant, adjustment NOT performed')
+        raise Exception('3: positive correlation not significant, adjustment NOT performed')
 
     if adjust_part == 'last':
         # Perform the linear adjustment for testdata after the breaktime
@@ -290,28 +305,24 @@ def regression_adjustment(dataframe, breaktime, adjust_part='first', return_part
         adjusted_part2 = cc * dataframe[['testdata']][breaktime:] + dd
     elif adjust_part == 'first':
         # Perform the linear adjustment for testdata before the breaktime
-        # TODO: Is this correct??
         cc = B[1][1] / B[0][1]
         dd = B[1][0] - cc * B[0][0]
         adjusted_part1 = cc * dataframe[['testdata']][:breaktime] + dd
         adjusted_part2 = dataframe[['testdata']][breaktime:]
     else:
-        raise Exception("Select 'first' or 'last' for part to adjust" )
-    #TODO: Test adjustment
-    adj_setting = {'status': '0: adjustment performed',
-                   'slope': cc, 'intercept': dd, 'model': B}
+        raise Exception("Select 'first' or 'last' for part to adjust")
 
-    dataframe['adjust'] = pd.concat([adjusted_part1, adjusted_part2])
-    # dataframe['adjusted'] = dataframe.adjust[breaktime:]
+    adj_setting = {'slope': cc, 'intercept': dd, 'part1_B1': B[0][0], 'part1_B2': B[0][1],
+                   'part2_B1': B[1][0], 'part2_B2': B[1][1],}
+
+    dataframe['adjusted'] = pd.concat([adjusted_part1, adjusted_part2])
+
     if return_part == 'all':
-        return dataframe.adjust
-        #self.regression_adjustment(dataframe, breaktime)
-        # dataframe['adjusted'] = dataframe.adjust
+        return dataframe['adjusted'], adj_setting
     elif return_part == 'last':
-        return dataframe.adjust[:breaktime]
-        # dataframe['adjusted'] = dataframe.adjust[:breaktime]
+        return dataframe['adjusted'][:breaktime], adj_setting
     elif return_part == 'first':
-        return dataframe.adjust[breaktime:]
+        return dataframe['adjusted'][breaktime:], adj_setting
     else:
         raise Exception("Select 'first' , 'last' or 'all' for part to return")
 

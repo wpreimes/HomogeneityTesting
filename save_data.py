@@ -6,8 +6,12 @@ Created on Mon Jun 19 13:28:09 2017
 """
 import pandas as pd
 import numpy as np
-from points_to_netcdf import points_to_netcdf
+from pygeogrids.grids import CellGrid
+import xarray as xr
+from pynetcf.point_data import GriddedPointData
 import os
+import re
+
 
 class save_Log(object):
     def __init__(self, workfolder, test_prod, ref_prod, anomaly, cells):
@@ -45,18 +49,53 @@ class load_Log(object):
 
 
 
-class SaveResults(object):
-    def __init__(self, path, grid, filename, buffer_size=200):
-        # type: (str,object,str,int) -> None
+class Results_2D(object):
+    '''
+    Baiscally a big DataFrame over all passed GPIs with function to flush and save data
+    '''
+    def __init__(self, path, grid, breaktimes, buffer_size=400):
+        # type: (str, CellGrid, list, int) -> None
+
+        if not all(isinstance(breaktime, str) for breaktime in breaktimes):
+            raise Exception("Breaktimes must be passed as list of strings")
+
         self.total_number = [0, ]
-        self.filename = filename
         self.path = path
         self.grid = grid
         self.buffer_size = buffer_size
-        self.data = {'gpi': [], 'h_fk': [], 'h_wk': [], 'test_results': [], 'status': []}
-
+        self.breaktimes = breaktimes
+        self.gpis = np.array([])
+        self.data = {breaktime: {'gpi':[]} for breaktime in self.breaktimes}
+        self.fn_global = 'global_points_homogtest.nc'
+        self.fn_images_base = 'HomogeneityTest_%s'
     def reset_data(self):
-        self.data = {'gpi': [], 'h_fk': [], 'h_wk': [], 'test_results': [], 'status': []}
+        self.data = {breaktime: {'gpi':[]} for breaktime in self.breaktimes}
+
+    def add_data(self, gpi, breaktime, data_dict):
+        '''
+        Fill buffer by adding data for gpi
+        :param gpi:
+        :param breaktime: str
+        :param data_dict:
+        :return:
+        '''
+
+        if breaktime not in self.data.keys():
+            raise Exception("Breaktime not in Buffer Object")
+        if gpi in self.data[breaktime]['gpi']:
+            raise Exception("GPI already stored")
+        else:
+            data_dict = self.extract_infos(data_dict)
+            self.data[breaktime]['gpi'].append(gpi)
+
+            for name, value in data_dict.iteritems():
+                if name not in self.data[breaktime].keys():
+                    self.data[breaktime][name] = []
+                self.data[breaktime][name].append(value)
+
+            #Save the buffer to file as soon as ANY breaktime reaches the max size
+            if len(self.data[breaktime]['gpi']) == self.buffer_size:
+                self.save_to_netcdf()
 
     def extract_infos(self, data_dict):
         # type: (dict) -> dict
@@ -87,37 +126,79 @@ class SaveResults(object):
 
             return {'h_wk': wk, 'h_fk': fk, 'test_results': all, 'status': status}
 
-    def fill_buffer(self, gpi, data_dict):
-        # type: (int,dict) -> None
-        data_dict = self.extract_infos(data_dict)
-        self.data['gpi'].append(gpi)
-        for name, val in data_dict.iteritems():
-            self.data[name].append(val)
-
-        if len(self.data['gpi']) == self.buffer_size:
-            self.save_to_netcdf()
 
     def save_to_netcdf(self):
-        var_meta_dicts = {
-            'test_results': {
-                'Description': 'Homogeneity Test Results Classified',
-                'Values': '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None'},
-            'status': {
-                'Description': 'Homogeneity Testing Status',
-                'Values':
-    '0 = Processing OK, 1 = No coinciding data for timeframe, 2 = Test TS and Ref TS do not match,\
-    3 = Spearman correlation too low, 4 = Minimum Dataseries Length not reached, 5 = neg/nan correl. aft. bias corr.,\
-    6 = Error during WK testing, 7 = Error during FK testing, 8 = WK test and FK test failed, 9 = Error reading gpi'
-                        }
-                        }
-        df = pd.DataFrame.from_dict(self.data)
-        df = df.set_index('gpi')
 
-        points_to_netcdf(dataframe=df, path=self.path,
-                         filename=self.filename,
-                         var_meta_dicts=var_meta_dicts)
+        file_meta_dict = {
+            'test_results': 'Break detection classes by Hopothesis tests.'
+                            '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None',
+            'status': 'Processing status and errors:'
+                      '0 = Processing OK,'
+                      '1 = No coinciding data for timeframe,'
+                      '2 = Test TS and Ref TS do not match,'
+                      '3 = Spearman correlation too low,'
+                      '4 = Minimum Dataseries Length not reached,'
+                      '5 = neg/nan correl. aft. bias corr.,'
+                      '6 = Error during WK testing,'
+                      '7 = Error during FK testing,'
+                      '8 = WK test and FK test failed,'
+                      '9 = Error reading gpi'}
 
+        dataframes = []
+        for breaktime, data_dict in self.data.iteritems():
+            df = pd.DataFrame.from_dict(data_dict)
+            df = df.set_index('gpi')
+            df = df.rename(columns={column_name : column_name + '_' + breaktime for column_name in df.columns.values})
+            dataframes.append(df)
+
+        df = pd.concat(dataframes, axis=1)
+        gpi_vals = df.to_dict('index')
+
+        with GriddedPointData(self.path, mode='a', grid=self.grid,
+                              fn_format='{:04d}.nc') as nc:
+
+            for loc_id, data_dict in gpi_vals.iteritems():
+                nc.write(loc_id, data_dict)
+                if loc_id not in self.gpis:
+                    self.gpis = np.append(self.gpis, loc_id)
+
+
+        self.gpis = np.append(self.gpis, df.index.values)
         self.reset_data()
+
+    def save_global_file(self):
+
+        grid = self.grid.subgrid_from_gpis(np.unique(self.gpis))
+        with GriddedPointData(self.path, grid=grid,
+                              fn_format='{:04d}.nc') as nc:
+
+            nc.to_point_data(os.path.join(self.path, self.fn_global))
+
+        return self.fn_global
+
+    def create_image_files(self):
+        global_file = xr.open_dataset(os.path.join(self.path, self.fn_global))
+        df = global_file.to_dataframe()
+
+        filenames =[]
+        for breaktime_str in self.breaktimes:
+            df_breaktime = df[['lat','lon']]
+            for col_name in df.columns.values:
+                if breaktime_str in col_name:
+                    [var, breaktime] = re.split(r'[_](?=[0-9])', col_name)
+                    df_breaktime[var] = df[col_name]
+
+            df_breaktime = df_breaktime.sort_values(['lat','lon']) \
+                                       .set_index(['lat','lon'])
+            df_breaktime.index
+            df_breaktime.index=df_breaktime.index.drop_duplicates()
+            print df_breaktime
+            global_image = df_breaktime.to_xarray()
+            filename = self.fn_images_base % breaktime_str
+            global_image.to_netcdf(os.path.join(self.path, filename))
+            filenames.append(filename)
+        return filenames
+
 
 
 '''     

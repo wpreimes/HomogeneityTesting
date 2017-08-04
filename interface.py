@@ -22,7 +22,7 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
 
 class HomogTest(object):
-    def __init__(self, test_prod, ref_prod, alpha, anomaly):
+    def __init__(self, test_prod, ref_prod, alpha, anomaly, adjusted_ts_path=None):
         # type: (str,str,float,Union(bool,str)) -> None
         '''
         :param test_prod:
@@ -53,6 +53,10 @@ class HomogTest(object):
 
         self._init_validate_cci_range()
 
+        if adjusted_ts_path:
+            self.adjusted_ts_path = adjusted_ts_path
+
+
     def _init_validate_cci_range(self):
         # TODO: Not needed anymore
         # type: (None) -> None
@@ -78,14 +82,14 @@ class HomogTest(object):
     def wk_test(dataframe, alternative='two-sided'):
         # type: (pd.DataFrame, str) -> (float,dict)
 
-        T_wk, p_wk = stats.mannwhitneyu(dataframe['Q'].loc[dataframe['group'] == 0],
+        p_wk = stats.mannwhitneyu(dataframe['Q'].loc[dataframe['group'] == 0],
                                         dataframe['Q'].loc[dataframe['group'] == 1],
                                         alternative=alternative)[1]
         stats_wk = stats.ranksums(dataframe['Q'].loc[dataframe['group'] == 0],
                                   dataframe['Q'].loc[dataframe['group'] == 1])[0]
         
 
-        return p_wk, T_wk, stats_wk
+        return p_wk, stats_wk
 
     @staticmethod
     def fk_test(dataframe, mode='median', alpha=0):
@@ -210,63 +214,80 @@ class HomogTest(object):
         # Drop days where either dataset is missing
         return df_time
 
-    def run_tests(self, data, breaktime, min_data_size, tests):
-        # type: (pd.DataFrame, datetime, int, np.array) -> (pd.DataFrame, dict)
 
+    def check_corr(self, df_time):
         # Check if any data is left for testdata and reference data
-        if data.isnull().all().refdata or data.isnull().all().testdata:
+        if df_time.isnull().all().refdata or df_time.isnull().all().testdata:
             raise Exception('1: No coinciding data for the selected timeframe')
 
-        # Check if lengths of remaining datasets equal
-        if data['refdata'].index.size != data['testdata'].index.size:
+        # Check if lengths of remaining datasets equal TODO: it always is, can be removed
+        if df_time['refdata'].index.size != df_time['testdata'].index.size:
             raise Exception('2: Test timeseries and reference timeseries do not match')
 
         # Calculation of Spearman-Correlation coefficient
-        corr, pval = stats.spearmanr(data['testdata'], data['refdata'], nan_policy='omit')  #TODO: omit or propagate?
+        corr, pval = stats.spearmanr(df_time['testdata'], df_time['refdata'], nan_policy='omit')
 
         # Check the rank correlation so that correlation is positive and significant
         if not (corr > 0 and pval < 0.01): #TODO: stricter thresholds?
             raise Exception('3: Spearman correlation failed with correlation %f \ '
                             '(must be >0)and pval %f (must be <0.01)' % (corr, pval))
 
-        # Relative Test
-        # Divide Time Series into subgroubs according to timeframe and breaktime
-        data['group'] = np.nan
+        return corr, pval
 
-        i1 = data.loc[:breaktime]
-        i2 = data.loc[breaktime + pd.DateOffset(1):]
 
-        data.loc[i1.index, 'group'] = 0
-        data.loc[i2.index, 'group'] = 1
+    def group_by_breaktime(self, df_time, breaktime, min_data_size):
+        '''
+        Divide Time Series into 2 subgroups according to breaktime (before/after)
+        :param df_time: pd.DataFrame
+        :param breaktime: datetime
+        :return: pd.DataFrame
+        '''
+        df_time['group'] = np.nan
+
+        i1 = df_time.loc[:breaktime]
+        i2 = df_time.loc[breaktime + pd.DateOffset(1):]
+
+        df_time.loc[i1.index, 'group'] = 0
+        df_time.loc[i2.index, 'group'] = 1
         ni1 = len(i1.index)
         ni2 = len(i2.index)
-
-        df_time = data.dropna() #TODO: again?
 
         # Check if group data sizes are above selected minimum size
         if ni1 < min_data_size or ni2 < min_data_size:
             raise Exception('4: Minimum Dataseries Length not reached. Size is %i and/or %i !> %i'
                             % (ni1, ni2, min_data_size))
 
+        return df_time
+
+    def ref_data_correction(self, df_time):
         df_time['bias_corr_refdata'], rxy, pval, ress = regress(df_time)
 
         if any(np.isnan(ress)):
             raise Exception('5: Negative or NaN correlation after refdata correction')
 
-        # Calculate difference TimeSeries
-        df_time['Q'] = df_time.testdata - df_time.bias_corr_refdata
+        return df_time['bias_corr_refdata']
 
+    def run_tests(self, data, tests=['wk','fk']):
+        # type: (pd.DataFrame, list) -> (pd.DataFrame, dict)
+        '''
+        Prepares Data for Testing. Bias Correction of Reference Data. Analyzes data sufficiency.
+        :param data:
+        :param breaktime:
+        :param min_data_size:
+        :param tests:
+        :return:
+        '''
         # Wilcoxon rank sum test
         if 'wk' in tests:
             try:
-                p_wk, T_wk, stats_wk = self.wk_test(df_time, 'two-sided')
+                p_wk, stats_wk = self.wk_test(data, 'two-sided')
 
                 if p_wk < self.alpha:
                     h_wk = 1
                 else:
                     h_wk = 0
 
-                wilkoxon = {'h': h_wk, 'zval': stats_wk, 'T': T_wk, 'p': p_wk}
+                wilkoxon = {'h': h_wk, 'zval': stats_wk, 'p': p_wk}
             except:
                 wilkoxon = {'h': 'Error during WK testing'}
                 pass
@@ -275,7 +296,7 @@ class HomogTest(object):
 
         if 'fk' in tests:
             try:
-                h_fk, stats_fk = self.fk_test(df_time[['Q', 'group']], mode='median', alpha=self.alpha)
+                h_fk, stats_fk = self.fk_test(data[['Q', 'group']], mode='median', alpha=self.alpha)
                 fligner_killeen = {'h': h_fk, 'stats': stats_fk}
             except:
                 fligner_killeen = {'h': 'Error during FK testing'}
@@ -283,7 +304,7 @@ class HomogTest(object):
         else:
             fligner_killeen = {'h': 'FK not selected'}
 
-        if type(wilkoxon['h']) is str and type(fligner_killeen['h'] is str):
+        if type(wilkoxon['h']) is str and type(fligner_killeen['h']) is str:
             raise Exception('6: WK test and FK test failed')
 
-        return df_time, {'wilkoxon': wilkoxon, 'fligner_killeen': fligner_killeen}
+        return data, {'wilkoxon': wilkoxon, 'fligner_killeen': fligner_killeen}
