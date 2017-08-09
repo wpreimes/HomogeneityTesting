@@ -417,14 +417,14 @@ class QDEGdata_3H(object):
 
         return data_group[startdate:enddate]
 
-'''
-from grid_functions import cells_for_continent
-gpi = 903676
-timeframe = [datetime(2009,1,1), datetime(2014,10,01)]
-data = QDEGdata_M(products=['adjusted_cci', 'merra2', 'cci_31_combined'])
-ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
-bias_corr_refdata, rxy, pval, ress = regress(
-    ts[['adjusted_cci', 'merra2']].rename(columns={'adjusted_cci': 'testdata', 'merra2': 'refdata'}))
-ts['merra2'] = bias_corr_refdata
-print ts
-'''
+if __name__ == '__main__':
+    from grid_functions import cells_for_continent
+    gpi = 736153
+    timeframe = [datetime(1990,1,1), datetime(2014,10,01)]
+    data = QDEGdata_M(products=['merra2', 'cci_31_combined'])
+    ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
+    bias_corr_refdata, rxy, pval, ress = regress(
+        ts[['cci_31_combined', 'merra2']].rename(columns={'cci_31_combined': 'testdata', 'merra2': 'refdata'}))
+    ts['merra2_corr'] = bias_corr_refdata
+    ts[['cci_31_combined', 'merra2']].to_csv(os.path.join(os.path.dirname(__file__),'data.csv'))
+

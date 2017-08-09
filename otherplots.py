@@ -27,6 +27,8 @@ import pygeogrids.netcdf as nc
 
 from points_to_netcdf import pd_from_2Dnetcdf
 from netCDF4 import Dataset
+import xarray as xr
+
 
 def inhomo_plot_with_stats(workdir, filename):
     # type: (str) -> dict
@@ -34,22 +36,25 @@ def inhomo_plot_with_stats(workdir, filename):
     :param workdir: path to directory containing nc files from HomogeneityTesting
     :return: None
     '''
-    filepath = os.path.join(workdir, filename + '.nc')
+    ncpath = os.path.join(workdir, filename)
     landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
     land_points = landgrid.get_grid_points()[0]
-
-    DF_Points = pd_from_2Dnetcdf(filepath, grid='global')
-
-    splitname = filename.split('_') #0=HomogeneityTest, 1=RefData, 2=breaktime
 
     log = load_Log(workdir)
     products = log.get_products()
     ref_prod = products['ref_prod']
     test_prod = products['test_prod']
-    if ref_prod != splitname[1]:
-        raise Exception('Reference Product from filename and log file not equal')
 
-    breaktime = datetime.strptime(splitname[2], '%Y-%m-%d')
+    ncfile = xr.open_dataset(ncpath)
+    DF_Points = pd.DataFrame(index=range(0, 720 * 1440))
+    DF_Points_from_file = ncfile.to_dataframe().reset_index(inplace=False).set_index(['location_id'])
+    DF_Points_from_file = DF_Points_from_file.loc[DF_Points_from_file.index.dropna()]
+    for name in DF_Points_from_file.columns.values:
+        DF_Points[name] = DF_Points_from_file[name]
+
+    splitname = filename.split('_')
+
+    breaktime_str = splitname[1]
 
     all_gpis = land_points.size
     tested_gpis = DF_Points['test_results'].loc[DF_Points['test_results'].isin([1., 2., 3., 4.])].size
@@ -75,9 +80,9 @@ def inhomo_plot_with_stats(workdir, filename):
                                              colors,
                                              N=4)
 
-    img = np.empty(DF_Points['lon'].values.size, dtype='float32')
+    img = np.empty(DF_Points.index.size, dtype='float32')
     img.fill(np.nan)
-    img[DF_Points.index.values] = DF_Points['test_results'].values
+    img[DF_Points.index] = DF_Points['test_results'].values
 
     # mask array where invalid values (nans) occur
     img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
@@ -89,11 +94,12 @@ def inhomo_plot_with_stats(workdir, filename):
 
     m.drawcoastlines()
     m.drawcountries()
-    lons, lats = np.meshgrid(np.unique(DF_Points['lon'].values),
-                             np.unique(DF_Points['lat'].values))
+    lons = (np.arange(360 * 4) * 0.25) - 179.875
+    lats = (np.arange(180 * 4) * 0.25) - 89.875
+    lons, lats = np.meshgrid(lons, lats)
 
     im = m.pcolormesh(lons, lats, img_masked, cmap=cmap, latlon=True)
-    # oder np.flipud(lats)
+
     im.set_clim(vmin=1, vmax=4)
 
     cb = m.colorbar(im, "bottom", size="5%", pad="8%")
@@ -107,13 +113,13 @@ def inhomo_plot_with_stats(workdir, filename):
     for j, lab in enumerate(['Wilkoxon', 'Fligner-Killeen', 'Both', 'None']):
         cb.ax.text((2 * j + 1) / 8.0, .5, lab, fontsize=15, ha='center', va='center')
 
-    title = 'HomogeneityTesting \n %s|%s|Breaktime:%s' % (test_prod, ref_prod, breaktime.strftime("%Y-%m-%d"))
+    title = 'HomogeneityTesting \n %s|%s|Breaktime:%s' % (test_prod, ref_prod, breaktime_str)
     plt.title(title, fontsize=20)
 
     plt.annotate(textbox, fontsize=15, xy=(0.025, 0.05), xycoords='axes fraction',
                  bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
-    plotfile_name = 'HomogeneityTest_%s_%s' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
+    plotfile_name = 'HomogeneityTest_%s_%s' % (ref_prod, breaktime_str)
     plt.savefig(workdir + '\\' + plotfile_name + '.png', dpi=f.dpi)
 
     return {'tested_gps': all_tested, 'wk_of_tested' : wk_tested, 'fk_of_tested': fk_tested,
@@ -201,12 +207,12 @@ def compare_RTM_RTG(workdir, model_prod):
 '''
 
 
-def show_tested_gpis(workdir, filename, breaktime):
+def show_tested_gpis(workdir, filename):
     '''
     Calculate spatial plots for the areas where Homogeneity Tests were (not)
     performed
     '''
-    filepath = os.path.join(workdir, filename + '.nc')
+    ncpath = os.path.join(workdir, filename)
     landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
     land_points = landgrid.get_grid_points()[0]
 
@@ -214,14 +220,19 @@ def show_tested_gpis(workdir, filename, breaktime):
     products = log.get_products()
     ref_prod = products['ref_prod']
     test_prod = products['test_prod']
-    DF_Points = pd_from_2Dnetcdf(filepath, grid='global')
+    ncfile = xr.open_dataset(ncpath)
 
-    status_var = Dataset(filepath).variables['status']
+    DF_Points = pd.DataFrame(index=range(0, 720 * 1440))
+    DF_Points_from_file = ncfile.to_dataframe().reset_index(inplace=False).set_index(['location_id'])
+    DF_Points_from_file = DF_Points_from_file.loc[DF_Points_from_file.index.dropna()]
+    for name in DF_Points_from_file.columns.values:
+        DF_Points[name] = DF_Points_from_file[name]
+
+    status_var = ncfile.variables['status'].attrs['Values']
 
     splitname = filename.split('_')
-    if ref_prod != splitname[1]:
-        raise Exception('Reference Product from filename and log file not equal')
-    breaktime = datetime.strptime(splitname[2], '%Y-%m-%d')
+
+    breaktime_str = splitname[1]
 
 
     colors = ["#2ecc71", "#9b59b6", "#3498db", "#95a5a6", "#e74c3c",
@@ -232,9 +243,9 @@ def show_tested_gpis(workdir, filename, breaktime):
                                              colors,
                                              N=N)
 
-    img = np.empty(DF_Points['lon'].values.size, dtype='float32')
+    img = np.empty(DF_Points.index.size, dtype='float32')
     img.fill(np.nan)
-    img[DF_Points.index.values] = DF_Points['status'].values
+    img[DF_Points.index] = DF_Points['status'].values
 
     # mask array where invalid values (nans) occur
     img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
@@ -247,11 +258,12 @@ def show_tested_gpis(workdir, filename, breaktime):
     m.drawcoastlines()
     m.drawcountries()
 
-    lons, lats = np.meshgrid(np.unique(DF_Points['lon'].values),
-                             np.unique(DF_Points['lat'].values))
+
+    lons = (np.arange(360 * 4) * 0.25) - 179.875
+    lats = (np.arange(180 * 4) * 0.25) - 89.875
+    lons, lats = np.meshgrid(lons, lats)
 
     im = m.pcolormesh(lons, lats, img_masked, cmap=cmap, latlon=True)
-    #TODO: or np.flipud(lats) ?????
 
     im.set_clim(vmin=0, vmax=N)
 
@@ -267,7 +279,7 @@ def show_tested_gpis(workdir, filename, breaktime):
     for j in range(N):
         cb.ax.text((float(j)/float(N)) + float(1./float(N*2)), .5, str(j), fontsize=15, ha='center', va='center')
 
-    title = 'HomogeneityTesting Coverage \n %s|%s|%s' % (test_prod, ref_prod, breaktime.strftime("%Y-%m-%d"))
+    title = 'HomogeneityTesting Coverage \n %s|%s|%s' % (test_prod, ref_prod, breaktime_str)
     plt.title(title, fontsize=20)
 
     stats = DF_Points['status'].dropna().values
@@ -275,8 +287,8 @@ def show_tested_gpis(workdir, filename, breaktime):
 
     # Grab the groups and their values from the meta data of the nc file
     meta ={}
-    groups_string = status_var.Values
-    groups_strings = groups_string.split(',')
+
+    groups_strings = status_var.split(',')
     for string in groups_strings:
         string = string.split('=')
         meta.update({int(string[0]): string[1]})
@@ -290,12 +302,12 @@ def show_tested_gpis(workdir, filename, breaktime):
     plt.annotate(textbox, fontsize=10, xy=(0.025, 0.05), xycoords='axes fraction',
                  bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
-    plotfile_name = 'RT_coverage_%s_%s' % (ref_prod, breaktime.strftime("%Y-%m-%d"))
+    plotfile_name = 'RT_coverage_%s_%s' % (ref_prod, breaktime_str)
     plt.savefig(workdir + '\\' + plotfile_name + '.png', dpi=f.dpi)
 
     return meta
-'''
-def longest_homog_period_plots(workdir, create_start_year_plot=True, create_end_year_plot=True):
+
+def longest_homog_period_plots(workdir, startyear_plot=True, endyear_plot=True):
     
     #Create Plot of the longest homogeneouse Period of all nc files in the working dir
     #:param workdir: str
@@ -304,15 +316,21 @@ def longest_homog_period_plots(workdir, create_start_year_plot=True, create_end_
     #    True to use fixed colobar (for comparsion of results for differenct cci versions
     #    False to use a different colorbar for different cci versions
     #:return: None
-    
-    DF_Period = calc_longest_homogeneous_period(workdir)
 
-    if create_end_year_plot:
-        points_to_netcdf(DF_Period[['endyear']], workdir, None, 'startendyears', None, None)
-    if create_start_year_plot:
-        points_to_netcdf(DF_Period[['startyear']], workdir, None, 'startendyears', None, None)
+    filename = calc_longest_homogeneous_period(workdir)
+    ncfile = xr.open_dataset(os.path.join(workdir, filename))
+
+    DF_Points = pd.DataFrame(index=range(0, 720 * 1440))
+    DF_Points_from_file = ncfile.to_dataframe().reset_index(inplace=False).set_index(['location_id'])
+    DF_Points_from_file = DF_Points_from_file.loc[DF_Points_from_file.index.dropna()]
+    for name in DF_Points_from_file.columns.values:
+        DF_Points[name] = DF_Points_from_file[name]
 
 
+    log = load_Log(workdir)
+    products = log.get_products()
+    ref_prod = products['ref_prod']
+    test_prod = products['test_prod']
 
     lons = (np.arange(360 * 4) * 0.25) - 179.875
     lats = (np.arange(180 * 4) * 0.25) - 89.875
@@ -326,13 +344,10 @@ def longest_homog_period_plots(workdir, create_start_year_plot=True, create_end_
                 (0, 0, 0.5, 1), (0, 0, 0.5, 1), (0, 0, 0.5, 1)]
 
     cmap = cmap.from_list('LongestPeriodCMap', cmaplist, cmap.N)
-    cmap_nonlin = nlcmap(cmap, levels)
-    # cmaplist = [cmap(i) for i in range(cmap.N)]
 
-
-    img = np.empty(lons.size, dtype='float32')
+    img = np.empty(DF_Points.index.size, dtype='float32')
     img.fill(np.nan)
-    img[DF_Period.index.values] = DF_Period['max_Period'].values
+    img[DF_Points.index] = DF_Points['max_Period'].values
 
     # mask array where invalid values (nans) occur
     img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
@@ -353,8 +368,6 @@ def longest_homog_period_plots(workdir, create_start_year_plot=True, create_end_
                                norm=plt.Normalize(vmin=levels[0], vmax=levels[-1]))
     sm._A = []
     cb = m.colorbar(sm, "bottom", size="5%", pad="8%")
-    # cb.outline.set_visible(False)
-    # cb.set_ticks(cmap_nonlin.transformed_levels)
 
     cb.set_ticklabels(["%.1f" % lev for lev in levels])
     for t in cb.ax.get_xticklabels():
@@ -362,14 +375,13 @@ def longest_homog_period_plots(workdir, create_start_year_plot=True, create_end_
 
     cb.set_label('Period Length [years]:', fontsize=20, labelpad=-75)
 
-    title = 'Length of Longest Homogeneous Period\n %s|%s' % ('CCI', ref_prod)
+    title = 'Length of Longest Homogeneous Period\n %s|%s' % (test_prod, ref_prod)
     plt.title(title, fontsize=20)
 
-    # plt.annotate(textbox, fontsize=15,xy=(0.025, 0.05), xycoords='axes fraction',bbox={'facecolor':'grey', 'alpha':0.5, 'pad':3})
+    filename = 'LongestHomogPeriod.png'
+    plt.savefig(workdir + '\\' + filename, dpi=f.dpi)
 
-    filename = 'RTM_LongestHomogeneousePeriod_%s' % (ref_prod)
-    plt.savefig(workdir + '\\' + filename + '.png', dpi=f.dpi)
-'''
+    return filename
 '''
 def extreme_break(workdir, ref_prod, test_prod):
     gpis = [363662, 406520, 564947, 391490]
@@ -400,12 +412,12 @@ def extreme_break(workdir, ref_prod, test_prod):
         filename = 'ExtremeBreak_%s_%i' % (ref_prod, gpi)
         plt.savefig(workdir + '\\' + filename + '.png')
 '''
-
-# df = pd_from_2Dnetcdf(r"H:\HomogeneityTesting_data\output\CCI33\HomogeneityTest_merra2_1991-08-01.nc", return_only_tested=False)
-# extreme_break(r'H:\HomogeneityTesting_data\output\CCI22EGU','gldas_v2','cci_22')
-# inhomo_plot_with_stats(r"H:\HomogeneityTesting_data\output\CCI33")
-# calc_longest_homogeneous_period(r"H:\HomogeneityTesting_data\output\CCI31EGU",'cci_22','merra2')
-# show_tested_gpis(r"H:\HomogeneityTesting_data\output\CCI33")
-# inhomo_plot_with_stats(r'H:\HomogeneityTesting_data\output\v15',"HomogeneityTest_merra2_2011-10-01")
-# compare_RTM_RTG(r'H:\HomogeneityTesting_data\output\CCI31EGU','merra2')
-# show_tested_gpis(r"H:\HomogeneityTesting_data\output\v15","HomogeneityTest_merra2_2011-10-01")
+if __name__ == '__main__':
+    # df = pd_from_2Dnetcdf(r"H:\HomogeneityTesting_data\output\CCI33\HomogeneityTest_merra2_1991-08-01.nc", return_only_tested=False)
+    # extreme_break(r'H:\HomogeneityTesting_data\output\CCI22EGU','gldas_v2','cci_22')
+    show_tested_gpis(r"H:\HomogeneityTesting_data\output\v5","HomogeneityTestResult_2007-01-01_image.nc")
+    longest_homog_period_plots(r"H:\HomogeneityTesting_data\output\v5")
+    #show_tested_gpis(r"H:\HomogeneityTesting_data\output\v2")
+    inhomo_plot_with_stats(r'H:\HomogeneityTesting_data\output\v5',"HomogeneityTestResult_2007-01-01_image.nc")
+    # compare_RTM_RTG(r'H:\HomogeneityTesting_data\output\CCI31EGU','merra2')
+    # show_tested_gpis(r"H:\HomogeneityTesting_data\output\v15","HomogeneityTest_merra2_2011-10-01")

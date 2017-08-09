@@ -254,7 +254,7 @@ def run_adjustment():
         '''
 
 
-def regression_adjustment(self, data, breaktime, adjust_part='first', return_part='all', test_adjusted=True):
+def regression_adjustment(self, data, breaktime, adjust_param = 'both', adjust_part='first', return_part='all', test_adjusted=True):
     '''
     :param data: pd.DataFrame
         from Homogeneity Testing, must not contain nan

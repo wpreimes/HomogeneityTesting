@@ -14,13 +14,12 @@ from multiprocessing import Process, Queue
 import pandas as pd
 from interface import HomogTest
 from cci_timeframes import get_timeframes
-from save_data import Results_2D, save_Log
+from save_data import Results2D, save_Log, GlobalResults
 from grid_functions import cells_for_continent
 from adjustment import regression_adjustment
 import numpy as np
+from otherplots import show_tested_gpis, inhomo_plot_with_stats, longest_homog_period_plots
 
-#from otherplots import show_tested_gpis, inhomo_plot_with_stats
-#from longest_homogeneous_period import calc_longest_homogeneous_period
 '''
 Breaktimes sind Punkte an denen Inhomogenitäten vermutet werden
 Laut Processing overview und Research letter:
@@ -62,21 +61,16 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
                          anomaly,
                          adjusted_ts_path)
 
-
-    # Object for saving spatial information to netcdf file
-
-
-    processed_cells = []
-
     for icell, cell in enumerate(cells):
-        print 'Processing QDEG Cell %i (iteration %i of %i)' % (cell, icell, len(cells))
 
-        log_file.add_line('%s: Start Testing Cell %i' % (str(datetime.now()), cell))
-        grid_points = (save_obj.grid).grid_points_for_cell(cell)[0]
+        print 'Processing QDEG Cell %i (iteration %i of %i)' % (cell, icell+1, len(cells))
+
+        log_file.add_line('%s: Start Testing Cell %i' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), cell))
+        grid_points = (save_obj.pre_process_grid).grid_points_for_cell(cell)[0]
 
         for iteration, gpi in enumerate(grid_points):
-            if iteration%10 == 0:
-                print 'processing gpi %i of %i' %(iteration, grid_points.size)
+            #if iteration%10 == 0:
+            #print 'processing gpi %i of %i' %(iteration, grid_points.size)
             '''
             if test_obj.ref_prod == 'ISMN-merge':
                 valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
@@ -116,17 +110,28 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
                 save_obj.add_data(gpi, str(breaktime.date()), testresult)
 
                 '''
+                # Adjustment 
+                1) Perform adjustment on the dataframe
+                    ---Use equal amouunt of data after the break than before and vice versa (never more than to next/previous break point +margin
+                    ----Use maximal amount of adjusted data (from breaktime until end of dataset)
+                    -- Adjust model param 1, model param 2 or both
+                2) replacce data in df_time with adjusted data
+                3) Iterate over all breaktimes
+                4) Save df time to file
+                5) Iterate over all gpis
+                
                 if any(h == 1 for h in [testresult['wilkoxon']['h'], testresult['fligner_killeen']['h']]):
                     try: # Time Series Adjustment
                         df_adjusted, adjresult = regression_adjustment(data = data,
                                                                        breaktime = breaktime,
+                                                                       adjust_param = 'both',
                                                                        adjust_part = 'first',
                                                                        return_part = 'all' if i==1 else 'first',
                                                                        test_adjusted = True)
 
                         adjresult.update({'status': '0: Adjustment performed'})
                     except Exception as e:
-                        df_adjusted = data
+                        df_adjusted = data #is actually un-adjusted
                         adjresult = {'slope': np.nan, 'intercept': np.nan, 'part1_B1': np.nan, 'part1_B2': np.nan,
                                        'part2_B1': np.nan, 'part2_B2': np.nan}
                         adjresult = {'status': str(e)}
@@ -152,16 +157,13 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
                 # Replace df_time[timeframe] with adjusted data
                 '''
 
-
-
+        saved_points = save_obj.save_to_gridded_netcdf() # Save data for the cell to netcdf file
+        q.put(saved_points)
         # Add Info to log file
-        save_obj.save_to_netcdf() # save rest to file
         log_file.add_line('%s: Finished testing for cell %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), cell))
-        processed_cells.append(cell)
-    if q:
-        q.put(processed_cells)
-    else:
-        return processed_cells
+
+
+
 
 
 def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=None, adjusted_ts_path=None,
@@ -196,47 +198,50 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Non
         else:
             cells = cells_for_continent(cells)
 
-    save_obj = Results_2D(workfolder, grid, breaktimes, buffer_size=100)
+    save_obj = Results2D(grid, workfolder, breaktimes)
 
-    if parallel_processes == 1:
-        processed_cells = process_for_cells(None, workfolder, save_obj, cells, log_file, test_prod, ref_prod, anomaly)
-    else:
-        q = Queue()
-        for cell_pack in list(split(cells, parallel_processes)): # Split cells in equally sized packs for multiprocessing
-            p = Process(target=process_for_cells, args=(q, workfolder, save_obj, cell_pack,
-                                                     log_file, test_prod, ref_prod, anomaly))
-            p.start()
+    saved_gpis = np.array([])
+    processes = []
+    q = Queue()
+    for cell_pack in list(split(cells, parallel_processes)): # Split cells in equally sized packs for multiprocessing
+        p = Process(target=process_for_cells, args=(q, workfolder, save_obj, cell_pack,
+                                                 log_file, test_prod, ref_prod, anomaly))
+        processes.append(p)
+        p.start()
+        saved_gpis = np.append(saved_gpis, q.get())
 
-        processed_cells = []
-        for i in range(len(breaktimes)):
-            processed_cells.append(q.get(True))
+    for process in processes:
+        process.join()
+
+    saved_gpis = np.hstack(saved_gpis)
+    print('Finished Testing (and Adjustment)')
     log_file.add_line('=====================================')
-    log_file.add_line('Processed Cells: %s' %str(processed_cells))
-    global_file_name = save_obj.save_global_file()
+    gridfile = save_obj.save_subgrid(saved_gpis)  # Save test gpis subset to gridfile
+    log_file.add_line('Saved Grid of Tested Points: %s' % gridfile)
+
+    # Global files and images from testing
+    save_obj = GlobalResults(workfolder, 'gridded_files', breaktimes)
+    global_file_name = save_obj.save_global_file(keep_cell_files=True) # Merge test result cell files to global file
     log_file.add_line('Merged files to global file: %s' % global_file_name)
-    image_files_names = save_obj.create_image_files()
-    log_file.add_line('Created global image files: %s' % image_files_names)
-    '''
-    # Create nc file with longest period data
-    ncfilename = calc_longest_homogeneous_period(workfolder, create_netcdf=True)
-    log_file.add_line('%s: Saved longest homogeneous Period, startdate, enddate to %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
-                                                                                          ncfilename))
-    for breaktime in breaktimes:
-        #Create coverage plots
-        meta = show_tested_gpis(workfolder, filename)
-        log_file.add_line('%s: Create coverage plots with groups %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                                                                        str(meta)))
-        #Create plots of test results with statistics
-        stats = inhomo_plot_with_stats(workfolder, filename)
-        log_file.add_line('%s: Create nice Test Results plot with stats for breaktime %s: %s' % (datetime.now().strftime('%Y-%m-%d_%H:%M:%S'),
-                                                                                                 str(i), str(stats)))
+    image_files_names = save_obj.create_image_files() # Create 2D image files from test results
+    log_file.add_line('Create global image files:')
+    for i, image_file in enumerate(image_files_names, start=1): # Create spatial plots from test results and coverage
+        log_file.add_line('  NC Image File %i : %s' % (i, image_file))
+        meta = show_tested_gpis(workfolder, image_file)
+        log_file.add_line('  Test Results Plot %i : %s' % (i, str(meta)))
+        stats = inhomo_plot_with_stats(workfolder, image_file)
+        log_file.add_line('  Coverage Plot %i : %s' % (i, str(stats)))
+    fn_long_per_plot = longest_homog_period_plots(workfolder)   # Create plot of longest homogeneous period
+    log_file.add_line('  Plot of Longest Homogeneous Period : %s' % fn_long_per_plot)
+
+
     '''
     log_file.add_line('=====================================')
     if adjusted_ts_path:
         log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         pass
         #Do TS adjutement and save resutls to path
-
+    '''
 
 if __name__ == '__main__':
     # Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
@@ -244,7 +249,7 @@ if __name__ == '__main__':
     start('cci_31_combined',
           'merra2',
           r'H:\HomogeneityTesting_data\output',
-          cells=[855], skip_times=None,
+          cells=[2247,2319,2283,2246,2318,2282,2210,2174,2354,2353,2245,2137,2209,2317,2281,2173,2389,2208,2100,2172,2280,2244,2136,2352], skip_times=None,
           anomaly=False,
           adjusted_ts_path=r'D:\users\wpreimes\datasets\CCI_adjusted',
-          parallel_processes=1)
+          parallel_processes=6)
