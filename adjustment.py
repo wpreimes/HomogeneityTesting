@@ -254,11 +254,13 @@ def run_adjustment():
         '''
 
 
-def regression_adjustment(self, data, breaktime, adjust_param = 'both', adjust_part='first', return_part='all', test_adjusted=True):
+def regression_adjustment(data, breaktime, adjust_param = 'both', adjust_part='first', return_part='all'):
     '''
     :param data: pd.DataFrame
         from Homogeneity Testing, must not contain nan
     :param breaktime: string or datetime
+    :param adjust_param: 'add' for adjusting only additive bias, 'mult' for adjusting only multiplicative bias
+                         'both' for adjusting both model parameters
     :param adjust_part: string
         'first' to adjust values BEFORE break time
         'last' to adjust values AFTER break time
@@ -293,27 +295,52 @@ def regression_adjustment(self, data, breaktime, adjust_param = 'both', adjust_p
     # print('Regression coefficients are: ' + str(regtest))
 
     if any(r < 0 for r in rval):
-        raise Exception('2: negative correlation found, adjustment NOT performed')
+        raise Exception('2: negative correlation found')
     if any(p > 0.05 for p in pval):
-        raise Exception('3: positive correlation not significant, adjustment NOT performed')
+        raise Exception('3: positive correlation not significant')
 
     if adjust_part == 'last':
         # Perform the linear adjustment for testdata after the breaktime
         cc = B[0][1] / B[1][1]
         dd = B[0][0] - cc * B[1][0]
         adjusted_part1 = dataframe[['testdata']][:breaktime]
-        adjusted_part2 = cc * dataframe[['testdata']][breaktime:] + dd
+        if adjust_param == 'both':
+            adjusted_part2 = cc * dataframe[['testdata']][breaktime:] + dd
+            B1_aft_adjust = cc * B[1][0]
+            B2_aft_adjust = cc
+        elif adjust_param == 'add':
+            adjusted_part2 = dataframe[['testdata']][breaktime:] + dd
+            B1_aft_adjust = cc * B[1][0]
+            B2_aft_adjust = None
+        elif adjust_param == 'multi':
+            adjusted_part2 = cc * dataframe[['testdata']][breaktime:]
+            B1_aft_adjust = None
+            B2_aft_adjust = cc
+
     elif adjust_part == 'first':
         # Perform the linear adjustment for testdata before the breaktime
         cc = B[1][1] / B[0][1]
         dd = B[1][0] - cc * B[0][0]
-        adjusted_part1 = cc * dataframe[['testdata']][:breaktime] + dd
+
         adjusted_part2 = dataframe[['testdata']][breaktime:]
+        if adjust_param == 'both':
+            adjusted_part1 = cc * dataframe[['testdata']][:breaktime] + dd
+            B1_aft_adjust = cc * B[0][0]
+            B2_aft_adjust = cc
+        elif adjust_param == 'add':
+            adjusted_part1 = dataframe[['testdata']][:breaktime] + dd
+            B1_aft_adjust = cc * B[0][0]
+            B2_aft_adjust = None
+        elif adjust_param == 'multi':
+            adjusted_part2 = cc * dataframe[['testdata']][:breaktime]
+            B1_aft_adjust = None
+            B2_aft_adjust = cc
     else:
         raise Exception("Select 'first' or 'last' for part to adjust")
 
     adj_setting = {'slope': cc, 'intercept': dd, 'part1_B1': B[0][0], 'part1_B2': B[0][1],
-                   'part2_B1': B[1][0], 'part2_B2': B[1][1],}
+                   'part2_B1': B[1][0], 'part2_B2': B[1][1],
+                   'B1_aft_adjust': B1_aft_adjust, 'B2_aft_adjust': B2_aft_adjust}
 
     dataframe['adjusted'] = pd.concat([adjusted_part1, adjusted_part2])
 

@@ -4,13 +4,12 @@ Created on Wed Mar 22 17:05:55 2017
 
 @author: wpreimes
 """
-
-
 from typing import Union
 import os
 from datetime import datetime
 from pygeogrids.netcdf import load_grid
 from multiprocessing import Process, Queue
+from pynetcf.time_series import GriddedNcIndexedRaggedTs
 import pandas as pd
 from interface import HomogTest
 from cci_timeframes import get_timeframes
@@ -19,7 +18,7 @@ from grid_functions import cells_for_continent
 from adjustment import regression_adjustment
 import numpy as np
 from otherplots import show_tested_gpis, inhomo_plot_with_stats, longest_homog_period_plots
-
+import csv
 '''
 Breaktimes sind Punkte an denen Inhomogenitäten vermutet werden
 Laut Processing overview und Research letter:
@@ -51,15 +50,59 @@ def create_workfolder(path):
         
     return workfolder
 
-def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_prod, anomaly, adjusted_ts_path=None):
+def join_files(filefolder, filelist):
+    merged_file_name = 'saved_points.csv'
+    merged = []
+
+    for file in filelist:
+        filepath = os.path.join(filefolder, file)
+        data = csv_read_write(filepath, 'read')
+        for row in data:
+            merged.append(row)
+        os.remove(filepath)
+
+    merged_int = map(int, [item for sublist in merged for item in sublist])
+    path = csv_read_write(os.path.join(filefolder, 'saved_points.csv'), 'write', merged_int)
+
+    return path, merged_int
+
+
+def csv_read_write(csv_path, mode, data=None):
+    if mode == 'write':
+        if not os.path.isfile(csv_path):
+            with open(csv_path, 'wb') as file:
+                wr = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+                wr.writerow(data)
+        else:
+            if os.path.isfile(csv_path):
+                with open(csv_path, 'ab') as file:
+                    wr = csv.writer(file,delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+                    wr.writerow(data)
+        return csv_path
+    if mode == 'read':
+        return_data = []
+        with open(csv_path, 'r') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                return_data.append(row)
+        return return_data
+
+def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_prod, anomaly, process_no, adjusted_ts_path=None):
     #Function for multicore processing
 
+    print('Start process %i' %process_no)
+    process_csv_file = 'saved_points_%s.csv' %process_no
+
+    tests = ['wilkoxon', 'fligner_killeen']
 
     test_obj = HomogTest(test_prod,
                          ref_prod,
+                         tests,
                          0.01,
                          anomaly,
                          adjusted_ts_path)
+    if adjusted_ts_path:
+        dataset = GriddedNcIndexedRaggedTs(path=adjusted_ts_path, grid=(save_obj.pre_process_grid), mode='w')
 
     for icell, cell in enumerate(cells):
 
@@ -68,9 +111,10 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
         log_file.add_line('%s: Start Testing Cell %i' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), cell))
         grid_points = (save_obj.pre_process_grid).grid_points_for_cell(cell)[0]
 
+
         for iteration, gpi in enumerate(grid_points):
-            #if iteration%10 == 0:
-            #print 'processing gpi %i of %i' %(iteration, grid_points.size)
+            if iteration%10 == 0:
+                print 'processing gpi %i of %i' %(iteration, grid_points.size)
             '''
             if test_obj.ref_prod == 'ISMN-merge':
                 valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
@@ -88,81 +132,105 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
             adjustment_results = {str(breaktime.date()):[] for breaktime in test_obj.breaktimes}
 
             for i, (timeframe, breaktime) in enumerate(zip(test_obj.timeframes, test_obj.breaktimes)):
-                # Cut data to timeframe
-                data = df_time[timeframe[0]:timeframe[1]]
-                try: # Homogeneity Testing
-                    data = data.dropna()
-                    # Checks if there is data left and calculates spearman correlation
-                    corr, pval = test_obj.check_corr(data)
-                    data = test_obj.group_by_breaktime(data, breaktime, min_data_size=3) #TODO: different value?
-                    # Correct bias in reference data
-                    data['bias_corr_refdata'] = test_obj.ref_data_correction(data[['testdata','refdata']])
-                    # Calculate difference TimeSeries
-                    data['Q'] = data['testdata'] - data['bias_corr_refdata']
-                    # Run Tests
-                    _, testresult = test_obj.run_tests(data=data,
-                                                          tests=['wk', 'fk'])
-                    testresult.update({'status': '0: Testing successful'})
-                except Exception as e:
-                    testresult = {'status': str(e)}
-
-                #Add Test results to data saving buffer
-                save_obj.add_data(gpi, str(breaktime.date()), testresult)
-
-                '''
-                # Adjustment 
-                1) Perform adjustment on the dataframe
-                    ---Use equal amouunt of data after the break than before and vice versa (never more than to next/previous break point +margin
-                    ----Use maximal amount of adjusted data (from breaktime until end of dataset)
-                    -- Adjust model param 1, model param 2 or both
-                2) replacce data in df_time with adjusted data
-                3) Iterate over all breaktimes
-                4) Save df time to file
-                5) Iterate over all gpis
-                
-                if any(h == 1 for h in [testresult['wilkoxon']['h'], testresult['fligner_killeen']['h']]):
-                    try: # Time Series Adjustment
-                        df_adjusted, adjresult = regression_adjustment(data = data,
-                                                                       breaktime = breaktime,
-                                                                       adjust_param = 'both',
-                                                                       adjust_part = 'first',
-                                                                       return_part = 'all' if i==1 else 'first',
-                                                                       test_adjusted = True)
-
-                        adjresult.update({'status': '0: Adjustment performed'})
-                    except Exception as e:
-                        df_adjusted = data #is actually un-adjusted
-                        adjresult = {'slope': np.nan, 'intercept': np.nan, 'part1_B1': np.nan, 'part1_B2': np.nan,
-                                       'part2_B1': np.nan, 'part2_B2': np.nan}
-                        adjresult = {'status': str(e)}
-                else:
-                    df_adjusted = data
-                    adjresult = {'status': '1: No break detected'}
-
-                adjusted_dataframes[str(breaktime.date())] = df_adjusted
-                adjustment_results[str(breaktime.date())] = adjresult
-
-                df_concat = pd.concat(adjusted_dataframes.values(), axis=1)
-
-
-
-
-
-
-
+                success = False
                 if adjusted_ts_path:
-                    adjust df_results
+                    max_retries = 3
+                else:
+                    max_retries=0
+                retries = 0
+                adjresult = {'slope': np.nan, 'intercept': np.nan, 'part1_B1': np.nan, 'part1_B2': np.nan,
+                                     'part2_B1': np.nan, 'part2_B2': np.nan,
+                                     'B1_aft_adjust': np.nan, 'B2_aft_adjust': np.nan,
+                                     'status_adj': '5: Point not tested'}
+                while not success:
+                    # Cut data to timeframe
+                    data = df_time[timeframe[0]:timeframe[1]]
+                    try: # Homogeneity Testing
+                        data = data.dropna()
+                        # Checks if there is data left and calculates spearman correlation
+                        corr, pval = test_obj.check_corr(data)
+                        data = test_obj.group_by_breaktime(data, breaktime, min_data_size=3) #TODO: different value?
+                        # Correct bias in reference data
+                        data['bias_corr_refdata'] = test_obj.ref_data_correction(data[['testdata','refdata']])
+                        # Calculate difference TimeSeries
+                        data['Q'] = data['testdata'] - data['bias_corr_refdata']
+                        # Run Tests
+                        _, testresult = test_obj.run_tests(data=data)
+                        testresult.update({'status_test': '0: Testing successful'})
+                    except Exception as e:
+                        testresult = {'status_test': str(e)}
+                        success = True # Finish this breaktime
+                        continue
 
-                # wenn testresults break finden adjustment über timeframe
-                # Replace df_time[timeframe] with adjusted data
-                '''
+                    if all(h == 0 for h in [testresult[test]['h'] for test in test_obj.tests]):
+                        success = True # Finish this breaktime
+                        #if retries == 0:
+                        #    print '%i: No break found' % gpi
+                        #else:
+                        #    print '%i: Break removed' % gpi
+                    elif retries == max_retries:
+                        success = True # After max nbr of repetitions, give up
+                        #print('%i: Max retries reached' % gpi)
+                    else:
+                        '''
+                        # Adjustment 
+                        1) Perform adjustment on the dataframe
+                            ---Use equal amouunt of data after the break than before and vice versa (never more than to next/previous break point +margin
+                            ----Use maximal amount of adjusted data (from breaktime until end of dataset)
+                            -- Adjust model param 1, model param 2 or both
+                        2) replacce data in df_time with adjusted data
+                        3) Iterate over all breaktimes
+                        4) Save df time to file
+                        5) Iterate over all gpis
+                        '''
+                        if adjusted_ts_path:
+                            try: # Time Series Adjustment
+                                df_adjusted, adjresult = regression_adjustment(data = data,
+                                                                               breaktime = breaktime,
+                                                                               adjust_param = 'both',
+                                                                               adjust_part = 'first',
+                                                                               return_part = 'all' if i==1 else 'first')
+
+                                adjresult.update({'status_adj': '0: Adjustment performed'})
+
+                                df_time.loc[df_adjusted.index]['testdata']= df_adjusted   # Replace df_time (all values) in timeframe with adjusted values
+                                retries += 1
+                            except Exception as e:
+                                print str(e)
+                                df_adjusted = data # is actually un-adjusted
+                                adjresult = {'slope': np.nan, 'intercept': np.nan, 'part1_B1': np.nan, 'part1_B2': np.nan,
+                                            'part2_B1': np.nan, 'part2_B2': np.nan,
+                                            'B1_aft_adjust': np.nan, 'B2_aft_adjust': np.nan, 'status_adj': str(e)}
+
+                                print '%i: Adjustment failed' %gpi
+                                success = True # Not a success, but continue
+
+                    if adjusted_ts_path and not adjresult: # If no break was found
+                        adjresult = {'slope': np.nan, 'intercept': np.nan, 'part1_B1': np.nan, 'part1_B2': np.nan,
+                                     'part2_B1': np.nan, 'part2_B2': np.nan,
+                                     'B1_aft_adjust': np.nan, 'B2_aft_adjust': np.nan,
+                                     'status_adj': '1: No adjustment necessary'}
+
+
+                gpi_result = {'testresult' : testresult}
+                if adjusted_ts_path:
+                    gpi_result['adjresult'] = adjresult
+
+                #Add Test results and adjustment results to data saving buffer
+                save_obj.add_data(gpi, str(breaktime.date()), gpi_result)
+
+            if adjusted_ts_path:
+                dataset.write(gpi, df_time[['testdata']].rename(columns={'testdata':test_obj.test_prod + '_adjusted'}))
+
 
         saved_points = save_obj.save_to_gridded_netcdf() # Save data for the cell to netcdf file
-        q.put(saved_points)
+
+        csv_read_write(os.path.join(workfolder, process_csv_file), 'write', saved_points)
+
         # Add Info to log file
         log_file.add_line('%s: Finished testing for cell %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), cell))
 
-
+    q.put(process_csv_file)
 
 
 
@@ -180,6 +248,9 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Non
     :param adjusted_ts_path: path to where adjusted data is saved
     :return:
     '''
+    if skip_times and adjusted_ts_path:
+        raise Warning('Ignoring Breaktimes with activated adjustment!')
+
     testtimes = get_timeframes(test_prod, skip_times=skip_times)
 
     timeframes = testtimes['timeframes']
@@ -200,20 +271,24 @@ def start(test_prod, ref_prod, path, cells='global',skip_times=None, anomaly=Non
 
     save_obj = Results2D(grid, workfolder, breaktimes)
 
-    saved_gpis = np.array([])
+
     processes = []
     q = Queue()
-    for cell_pack in list(split(cells, parallel_processes)): # Split cells in equally sized packs for multiprocessing
+    csv_files = []
+    # Split cells in equally sized packs for multiprocessing
+    for process_no, cell_pack in enumerate(list(split(cells, parallel_processes))):
         p = Process(target=process_for_cells, args=(q, workfolder, save_obj, cell_pack,
-                                                 log_file, test_prod, ref_prod, anomaly))
+                                              log_file, test_prod, ref_prod, anomaly, process_no, adjusted_ts_path))
         processes.append(p)
         p.start()
-        saved_gpis = np.append(saved_gpis, q.get())
+
+    for process in processes:
+        csv_files.append(q.get(True))
 
     for process in processes:
         process.join()
 
-    saved_gpis = np.hstack(saved_gpis)
+    _, saved_gpis = join_files(workfolder, csv_files)
     print('Finished Testing (and Adjustment)')
     log_file.add_line('=====================================')
     gridfile = save_obj.save_subgrid(saved_gpis)  # Save test gpis subset to gridfile
@@ -249,7 +324,8 @@ if __name__ == '__main__':
     start('cci_31_combined',
           'merra2',
           r'H:\HomogeneityTesting_data\output',
-          cells=[2247,2319,2283,2246,2318,2282,2210,2174,2354,2353,2245,2137,2209,2317,2281,2173,2389,2208,2100,2172,2280,2244,2136,2352], skip_times=None,
+          cells=[777],
+          skip_times=None,
           anomaly=False,
-          adjusted_ts_path=r'D:\users\wpreimes\datasets\CCI_adjusted',
-          parallel_processes=6)
+          adjusted_ts_path=None,
+          parallel_processes=1)

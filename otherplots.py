@@ -228,7 +228,7 @@ def show_tested_gpis(workdir, filename):
     for name in DF_Points_from_file.columns.values:
         DF_Points[name] = DF_Points_from_file[name]
 
-    status_var = ncfile.variables['status'].attrs['Values']
+    status_var = ncfile.variables['status_test'].attrs['Values']
 
     splitname = filename.split('_')
 
@@ -239,13 +239,13 @@ def show_tested_gpis(workdir, filename):
               "#34495e", "#FFC200", "#FFC0CB", "#FF1493", "#FFFF00"]
 
     N = len(colors)
-    cmap = LinearSegmentedColormap.from_list('status',
+    cmap = LinearSegmentedColormap.from_list('status_test',
                                              colors,
                                              N=N)
 
     img = np.empty(DF_Points.index.size, dtype='float32')
     img.fill(np.nan)
-    img[DF_Points.index] = DF_Points['status'].values
+    img[DF_Points.index] = DF_Points['status_test'].values
 
     # mask array where invalid values (nans) occur
     img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
@@ -282,7 +282,7 @@ def show_tested_gpis(workdir, filename):
     title = 'HomogeneityTesting Coverage \n %s|%s|%s' % (test_prod, ref_prod, breaktime_str)
     plt.title(title, fontsize=20)
 
-    stats = DF_Points['status'].dropna().values
+    stats = DF_Points['status_test'].dropna().values
     all_gpis = float(land_points.size)
 
     # Grab the groups and their values from the meta data of the nc file

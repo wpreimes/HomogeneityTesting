@@ -53,7 +53,7 @@ class Results2D(object):
     '''
     Baiscally a big DataFrame over all passed GPIs with function to flush and save data
     '''
-    def __init__(self, grid, path, breaktimes, buffer_size=400):
+    def __init__(self, grid, path, breaktimes):
         # type: (grids.CellGrid,str, list, int) -> None
 
         if not all(isinstance(breaktime, str) for breaktime in breaktimes):
@@ -82,7 +82,7 @@ class Results2D(object):
     def reset_data(self):
         self.data = {breaktime: {'gpi': []} for breaktime in self.breaktimes}
 
-    def add_data(self, gpi, breaktime, data_dict):
+    def add_data(self, gpi, breaktime, gpi_result):
         '''
         Fill buffer by adding data for gpi
         :param gpi:
@@ -93,7 +93,13 @@ class Results2D(object):
         if gpi in self.data[breaktime]['gpi']:
             raise Exception("GPI already stored")
         else:
-            data_dict = self.extract_infos(data_dict)
+            data_dict = {}
+            for name, resdict in gpi_result.iteritems():
+                if name == 'testresult':
+                    data_dict.update(self.extract_infos_test(resdict))
+                if name == 'adjresult':
+                    data_dict.update(self.extract_infos_adj(resdict))
+
             self.data[breaktime]['gpi'].append(gpi)
 
             for name, value in data_dict.iteritems():
@@ -102,11 +108,11 @@ class Results2D(object):
                 self.data[breaktime][name].append(value)
 
 
-    def extract_infos(self, data_dict):
+    def extract_infos_test(self, data_dict):
         # type: (dict) -> dict
-        status = int(data_dict['status'][0])
+        status = int(data_dict['status_test'][0])
         if status not in [0, 6, 7]:
-            return {'h_wk': np.nan, 'h_fk': np.nan, 'test_results': np.nan, 'status': status}
+            return {'h_wk': np.nan, 'h_fk': np.nan, 'test_results': np.nan, 'status_test': status}
         else:
             wk = data_dict['wilkoxon']['h']
             fk = data_dict['fligner_killeen']['h']
@@ -129,7 +135,18 @@ class Results2D(object):
             elif fk == 1:
                 all = 2.0
 
-            return {'h_wk': wk, 'h_fk': fk, 'test_results': all, 'status': status}
+            return {'h_wk': wk, 'h_fk': fk, 'test_results': all, 'status_test': status}
+
+    def extract_infos_adj(self, data_dict):
+        # type: (dict) -> dict
+        status = int(data_dict['status_adj'][0])
+        if status not in [0]:
+            return {'slope': np.nan, 'intercept': np.nan, 'part1_B1': np.nan, 'part1_B2': np.nan,
+                   'part2_B1': np.nan, 'part2_B2': np.nan,
+                   'B1_aft_adjust': np.nan, 'B2_aft_adjust': np.nan, 'status_adj': status}
+        else:
+            data_dict['status_adj'] = status
+        return data_dict
 
 
     def save_to_gridded_netcdf(self):
@@ -199,7 +216,7 @@ class GlobalResults(object):
         file_meta_dict = {
             'test_results': 'Break detection classes by Hopothesis tests.'
                             '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None',
-            'status': '0 = Processing OK,'
+            'status_test': '0 = Processing OK,'
                       '1 = No coinciding data for timeframe,'
                       '2 = Test TS and Ref TS do not match,'
                       '3 = Spearman correlation too low,'
@@ -209,6 +226,11 @@ class GlobalResults(object):
                       '7 = Error during FK testing,'
                       '8 = WK test and FK test failed,'
                       '9 = Error reading gpi'}
+
+           # 'status_adj': '0: Adjustment performed,'
+           #         '1 = No adjustment necessary,'
+           #         '2 = negative correlation,'
+           #         '3 = positive correlation insignificant'}
 
         global_file = xr.open_dataset(os.path.join(self.path, self.fn_global))
         df = global_file.to_dataframe()
@@ -238,11 +260,12 @@ class GlobalResults(object):
 if __name__ == '__main__':
     gpis = range(392888,392901)+range(391448,391461)
     grid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
-    save_obj = Results2D(grid, r'C:\temp', ['2000-01-01'])
+    save_obj = Results2D(grid, r'C:\Temp', ['2000-01-01'])
     for gpi in gpis:
-        save_obj.add_data(gpi, '2000-01-01', {'status':'1'})
-    save_obj.save_to_gridded_netcdf()
+        save_obj.add_data(gpi, '2000-01-01', {'testresult':{'status_test':'1'},
+                                              'adjresult': {'status_adj': '1'}})
+    global_gpis = save_obj.save_to_gridded_netcdf()
 
-    glob_obj = GlobalResults(r'C:\temp', ['2000-01-01'])
+    glob_obj = GlobalResults(r'C:\Temp', r'C:\Temp\gridded_files', ['2000-01-01'])
     global_file_name = glob_obj.save_global_file(False)
     image_files_names = glob_obj.create_image_files()

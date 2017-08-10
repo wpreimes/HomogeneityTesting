@@ -22,13 +22,14 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
 
 class HomogTest(object):
-    def __init__(self, test_prod, ref_prod, alpha, anomaly, adjusted_ts_path=None):
-        # type: (str,str,float,Union(bool,str)) -> None
+    def __init__(self, test_prod, ref_prod, tests, alpha, anomaly, adjusted_ts_path=None):
+        # type: (str,str,list,float,Union(bool,str)) -> None
         '''
         :param test_prod:
         :param ref_prod:
         :param timeframe:
         :param breaktime:
+        :param tests:
         :param alpha:
         :param anomaly: To use anomaly data choose 'timeframe' or 'ccirange', else False
         '''
@@ -40,6 +41,7 @@ class HomogTest(object):
         self.timeframes = test_prod_times['timeframes']
         self.range = test_prod_times['ranges']
 
+        self.tests = tests
         '''
         if self.ref_prod == 'ISMN-merge':
             self.data = QDEGdata_M(products=[test_prod])
@@ -267,18 +269,18 @@ class HomogTest(object):
 
         return df_time['bias_corr_refdata']
 
-    def run_tests(self, data, tests=['wk','fk']):
+    def run_tests(self, data):
         # type: (pd.DataFrame, list) -> (pd.DataFrame, dict)
         '''
         Prepares Data for Testing. Bias Correction of Reference Data. Analyzes data sufficiency.
         :param data:
         :param breaktime:
         :param min_data_size:
-        :param tests:
         :return:
         '''
+        tests = self.tests
         # Wilcoxon rank sum test
-        if 'wk' in tests:
+        if 'wilkoxon' in tests:
             try:
                 p_wk, stats_wk = self.wk_test(data, 'two-sided')
 
@@ -294,7 +296,7 @@ class HomogTest(object):
         else:
             wilkoxon = {'h': 'WK not selected'}
 
-        if 'fk' in tests:
+        if 'fligner_killeen' in tests:
             try:
                 h_fk, stats_fk = self.fk_test(data[['Q', 'group']], mode='median', alpha=self.alpha)
                 fligner_killeen = {'h': h_fk, 'stats': stats_fk}
