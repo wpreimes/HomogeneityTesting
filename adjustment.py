@@ -1,263 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jun 08 10:16:42 2017
+Created on Aug 18 12:27 2017
 
 @author: wpreimes
 """
-import pandas as pd
+from datetime import datetime
 import numpy as np
-from scipy import stats
-import os
-import pygeogrids.netcdf as nc
-from datetime import datetime, timedelta
-from pynetcf.time_series import GriddedNcIndexedRaggedTs
-from pynetcf.point_data import GriddedPointData
-from points_to_netcdf import points_to_netcdf
-from otherfunctions import dates_to_num, regress
-from interface import HomogTest
-from cci_timeframes import get_timeframes
-from points_to_netcdf import pd_from_2Dnetcdf, create_cellfile_name
-from grid_functions import cells_for_continent
+import scipy.stats as stats
+import pandas as pd
 
-
-class Adjustment(object):
-    def __init__(self, datadir):
-        self.datadir = datadir
-
-
-        mergetimes = get_timeframes(self.test_prod)
-        self.breaktimes = mergetimes['breaktimes'][::-1]
-        self.timeframes = mergetimes['timeframes'][::-1]
-        test_results = self._init_import_test_results()
-        self.adjustment_timeframes = self._init_adjustment_times(test_results,
-                                                                 self.breaktimes,
-                                                                 self.timeframes)
-
-    def _init_import_test_results(self):
-        dataframes = []
-        for breaktime in self.breaktimes:
-            filename = 'HomogeneityTest_%s_%s.nc' % (self.ref_prod, breaktime)
-            testresults = pd_from_2Dnetcdf(os.path.join(self.workdir, filename),
-                                           grid='land')[['test_results']]
-            testresults = testresults.rename(columns={'test_results': breaktime})
-            dataframes.append(testresults)
-
-        return pd.concat(dataframes, axis=1)
-
-    def _init_adjustment_times(self, test_results, breaktimes, timeframes):
-        adjustment_times = pd.DataFrame(index=test_results.index.values,
-                                        columns=[timeframes[0][0]] + np.ndarray.tolist(breaktimes) + [
-                                            timeframes[-1][-1]])
-        adjustment_times[timeframes[0][0]] = 99  # Timeframes are special
-
-        for breaktime in breaktimes:
-            adjustment_times[breaktime] = 1
-            no_break_gpis = test_results[breaktime].loc[(test_results[breaktime] == 4) | \
-                                                        (np.isnan(test_results[breaktime]))].index.values
-            adjustment_times[breaktime].ix[no_break_gpis] = 0
-
-        adjustment_times[timeframes[-1][-1]] = 99  # Timeframes are special
-        return adjustment_times
-
-
-
-    def adjust_ts(self, gpi):
-        # Perform adjustment of Timeseries AFTER breaktime (if inhomogeneity exists data AFTER the breaktime
-        # is matched to data BEFORE breaktime)
-        adjustment_pattern = self.adjustment_timeframes.loc[gpi]
-        starttime = datetime.strptime(adjustment_pattern.index.values[0], '%Y-%m-%d')
-        endtime = datetime.strptime(adjustment_pattern.index.values[-1], '%Y-%m-%d')
-        breaktimes = []
-        for breaktime_string in adjustment_pattern.loc[adjustment_pattern == 1].index.values:
-            breaktimes.append(datetime.strptime(breaktime_string, '%Y-%m-%d'))
-        breaktimes = breaktimes[::-1]
-        data = self.read_gpi(gpi)[starttime:endtime]
-
-        if len(breaktimes) == 0:
-            return data[['testdata']].rename(columns={'testdata': 'not_adjusted'})
-
-        df_adjusted = pd.DataFrame(columns=['testdata'])
-        adj_settings = {}
-        for i, breaktime in enumerate(breaktimes):
-            if i == 0:
-                # first iteration never uses new data
-                if len(breaktimes) > 1:
-                    data_to_adjust = data[breaktimes[i + 1]:]  # ----BT-----|BT-----BT-----end|
-                else:
-                    data_to_adjust = data  # |start-----BT-----end|
-            elif i != len(breaktimes) - 1:  # common case
-                if any(pd.notnull(df_adjusted[breaktime:])):
-                    # Merge adjusted data (before break) and unadjusted data (after break)
-                    testdata_merge = pd.concat([data['testdata'][breaktimes[i + 1]:breaktime],
-                                                df_adjusted['testdata'][breaktime:]])
-                    # Add refdata (bias corrected) for adjustement
-                    data_to_adjust = pd.DataFrame(index=testdata_merge.index,
-                                                  data={'testdata': testdata_merge,
-                                                        'refdata': data['refdata'][breaktimes[i + 1]:]})
-                    # -----BT-------|BT--------BT--adjusted data--|
-                else:
-                    data_to_adjust = data[breaktimes[i + 1]:]
-            elif i == len(breaktimes) - 1:  # last iteration
-                if any(pd.notnull(df_adjusted[breaktime:])):
-                    testdata_merge = pd.concat([data['testdata'][:breaktime],
-                                                df_adjusted['testdata'][breaktime:]])
-                    data_to_adjust = pd.DataFrame(index=testdata_merge.index,
-                                                  data={'testdata': testdata_merge,
-                                                        'refdata': data['refdata']})
-                    # -----BT-------|BT--------BT--adjusted data--|
-                else:
-                    data_to_adjust = data  # no adjusted data available and last breaktime, use whole frame as is
-
-            try:
-                bias_corr_refdata, rxy, pval, ress = regress(data_to_adjust)
-                data_to_adjust['bias_corr_refdata'] = bias_corr_refdata
-                data_to_adjust = data_to_adjust[['testdata', 'bias_corr_refdata']].rename(
-                    columns={'bias_corr_refdata': 'refdata'})
-
-                if i == 0:
-                    return_whole = True
-                else:
-                    return_whole = False
-                settings, adjusted_data = self.regression_adjustment(data_to_adjust, breaktime, return_whole)
-
-            except Exception as e:
-                settings = {'status': e[0], 'slope': np.nan,
-                            'intercept': np.nan, 'model': np.nan}
-                # TODO: SAve this also in the netcdf file
-                # TODO: Adjust daily data!!!
-                if i == len(breaktimes) - 1:
-                    adjusted_data = data_to_adjust['testdata'][:breaktime]
-                else:
-                    adjusted_data = data_to_adjust['testdata'][breaktimes[i + 1]:breaktime]
-            # ts_adjusted = df_adjusted['testdata'].append(adjusted_data)
-            if df_adjusted['testdata'].index.size == 0:
-                df_adjusted['testdata'] = adjusted_data
-            else:
-                save = (df_adjusted['testdata'].append(adjusted_data)).sort_index()
-                df_adjusted = pd.DataFrame(columns=['testdata'])
-                df_adjusted['testdata'] = save
-
-            adj_settings[breaktime.strftime('%Y-%m-%d')] = settings
-
-        data['adjusted'] = df_adjusted['testdata']
-
-        return adj_settings, data[['adjusted']]
-
-
-
-def run_adjustment():
-
-    adjust_obj = Adjustment(r"H:\HomogeneityTesting_data\output\CCI31EGU",
-                        'adjusted_cci',
-                        'merra2',
-                        0.1)
-
-
-    grid_path = r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc"
-    cell_grid = nc.load_grid(grid_path)
-    cells = cells_for_continent('Australia')
-
-    adjusted_data_path = r"D:\users\wpreimes\datasets\CCI_31_D\adjusted_temp"
-    # TODO: Add own list for points should have been adjusted but could not
-    unadjusted_gps = {'gpi': [], 'slope': [], 'intercept': [], 'adjustment_class': []}  # 0= UNadjusted, 1=adjusted
-
-    dataset = GriddedNcIndexedRaggedTs(path=adjusted_data_path, grid=cell_grid, mode='w')
-    adjusted_gps = GriddedPointData(os.path.join(adjusted_data_path,'adjusted_gps.nc'), cell_grid, mode='w')
-
-    for cell_index, cell in enumerate(cells):
-        gpis = cell_grid.grid_points_for_cell(cell)[0]
-        adjustment_status={'gpi':[], 'status':[]}
-        adjustment_stats={}
-        for index, gpi in enumerate(gpis):
-            if index % 50 == 0:
-                print('%i of %i' % (index, gpis.size))
-            try:
-                adj_settings, adjusted_data = adjust_obj.adjust_ts(gpi)
-            except:
-                adjustment_status['gpi'].append(gpi)
-                adjustment_status['status'].append(0)
-                continue
-            for breaktime_str, settings in adj_settings.iteritems():
-                if breaktime_str not in adjustment_stats.keys():
-                    adjustment_stats[breaktime_str] = {'gpi' : [],
-                                                       'intercept': [], 'slope': []}
-
-                adjustment_stats[breaktime_str]['gpi'].append(gpi)
-                adjustment_stats[breaktime_str]['intercept'].append(adj_settings[breaktime_str]['intercept'])
-                adjustment_stats[breaktime_str]['slope'].append(adj_settings[breaktime_str]['slope'])
-
-            if adjusted_data.columns.values[0] == 'not_adjusted':
-                adjustment_status['gpi'].append(gpi)
-                adjustment_status['status'].append(0)
-            if adjusted_data.columns.values[0] == 'adjusted':
-                adjustment_status['gpi'].append(gpi)
-                adjustment_status['status'].append(1)
-
-
-            dataset.write(gpi, adjusted_data)
-        dataset.close()
-
-
-        points_to_netcdf(pd.DataFrame(index=adjustment_status['gpi'],
-                                      data={'status': adjustment_status['status']}),
-                         path=adjusted_data_path,
-                         filename='adjustment_status')
-        for breaktime_str in adjustment_stats.keys():
-            points_to_netcdf(pd.DataFrame(index=adjustment_stats[breaktime_str]['gpi'],
-                                          data={'intercept': adjustment_stats[breaktime_str]['intercept'],
-                                                'slope': adjustment_stats[breaktime_str]['slope']}),
-                             path=adjusted_data_path,
-                             filename=breaktime_str+'_adj_stats')
-
-
-        '''
-        adjusted_gps = {}
-        adjusted_ts_data = pd.DataFrame()
-        if os.path.isfile(os.path.join(adjusted_data_path, str(cell) + '.nc')): continue  # already processed
-        print('cell %i of %i' % (cell_index, len(cells)))
-        gpis = cell_grid.grid_points_for_cell(cell)[0]
-        for index, gpi in enumerate(gpis):
-            if index % 50 == 0:
-                print('%i of %i' % (index, gpis.size))
-            try:
-                adj_settings, adjusted_data = adjust_obj.adjust_ts(gpi)
-            except:
-                continue
-            column_name = adjusted_data.columns.values[0]
-            if column_name == 'not_adjusted':
-                unadjusted_gps['gpi'].append(gpi)
-            if column_name == 'adjusted':
-                for breaktime_str, settings in adj_settings.iteritems():
-                    if breaktime_str not in adjusted_gps.keys():
-                        adjusted_gps[breaktime_str] = pd.DataFrame(index=cell_grid.grid_points_for_cell(cell)[0],
-                                                                   data={'intercept':np.nan, 'slope':np.nan})
-
-                    adjusted_gps[breaktime_str].loc[gpi,['intercept','slope']]=[settings['slope'], settings['intercept']]
-
-            if adjusted_ts_data.index.size == 0:
-                adjusted_ts_data = adjusted_data.rename(columns={column_name: gpi})
-            else:
-                adjusted_ts_data[gpi] = adjusted_data
-
-            dataset.write(gpi,adjusted_data)
-
-        for breaktime_str, data in adjusted_gps.iteritems():
-            points_to_netcdf(dataframe=data, path=adjusted_data_path,
-                             filename='adjustment_stats_' + breaktime_str)
-
-        '''
-        '''
-        dates = np.array([date.to_datetime() for date in pd.to_datetime(adjusted_ts_data.index.values)])
-        data = {'sm_adjusted': np.array([adjusted_ts_data[gpi].values for gpi in adjusted_ts_data.columns.values])}
-        loc_ids = adjusted_ts_data.columns.values
-        write_gpis_to_file(data, dates, loc_ids, adjusted_data_path, str(cell) + '.nc')
-        '''
-
-
-def regression_adjustment(data, breaktime, adjust_param = 'both', adjust_part='first', return_part='all'):
+def adjustment(data, B, breaktime, adjust_param = 'both', adjust_part='first', return_part='all',
+               check_adjustment=False):
     '''
     :param data: pd.DataFrame
         from Homogeneity Testing, must not contain nan
+    :param B: np.matrix
     :param breaktime: string or datetime
     :param adjust_param: 'add' for adjusting only additive bias, 'mult' for adjusting only multiplicative bias
                          'both' for adjusting both model parameters
@@ -268,13 +25,99 @@ def regression_adjustment(data, breaktime, adjust_param = 'both', adjust_part='f
         'all' to return adjusted dataframe over whole time frame
         'first' to return only data before breaktime
         'last' to return only data after breaktime
-    :param test_adjustment: bool
-        'True' to re-test adjusted data for breaks
     :return: pd.DataFrame, dict
     '''
-    dataframe = data
+
+    dataframe = data.copy()
+
+    if adjust_part == 'last':
+        # Perform the linear adjustment for testdata after the breaktime
+        cc = B[0][1] / B[1][1]
+        dd = B[0][0] - cc * B[1][0]
+        adjusted_part1 = dataframe[['testdata']][:breaktime]
+
+        if adjust_param == 'both':
+            adjusted_part2 = cc * dataframe[['testdata']][breaktime:] + dd
+        elif adjust_param == 'add':
+            adjusted_part2 = dataframe[['testdata']][breaktime:] + dd
+        elif adjust_param == 'multi':
+            adjusted_part2 = cc * dataframe[['testdata']][breaktime:]
+        adjusted_part2 = adjusted_part2[breaktime + pd.DateOffset(1):]
+
+
+    elif adjust_part == 'first':
+        # Perform the linear adjustment for testdata before the breaktime
+        cc = B[1][1] / B[0][1]
+        dd = B[1][0] - cc * B[0][0]
+        adjusted_part2 = dataframe[['testdata']][breaktime + pd.DateOffset(1):]
+        if adjust_param == 'both':
+            adjusted_part1 = cc * dataframe[['testdata']][:breaktime] + dd
+        elif adjust_param == 'add':
+            adjusted_part1 = dataframe[['testdata']][:breaktime] + dd
+        elif adjust_param == 'multi':
+            adjusted_part1 = cc * dataframe[['testdata']][:breaktime]
+        adjusted_part1 = adjusted_part1
+
+    else:
+        raise Exception("Select 'first' or 'last' for part to adjust")
+
+    adj_setting = {'slope': cc, 'intercept': dd, 'part1_B1': B[0][0], 'part1_B2': B[0][1],
+                   'part2_B1': B[1][0], 'part2_B2': B[1][1]}
+
+    dataframe['adjusted'] = pd.concat([adjusted_part1, adjusted_part2])
+
+    if check_adjustment:
+        tolerance = 0.01 # TODO: für monthly weniger streng als für daily
+        re_adjusted, re_sett = \
+            adjustment(dataframe[['adjusted','refdata']].rename(columns={'adjusted':'testdata'}),
+                                  B, breaktime, adjust_param, adjust_part, return_part, check_adjustment=False)
+
+        print 'Adjustment settings:'
+        print re_sett
+
+        p1_B1_after = re_sett['part1_B1']
+        p1_B2_after = re_sett['part1_B2']
+
+        p2_B1_after = re_sett['part2_B1']
+        p2_B2_after = re_sett['part2_B2']
+
+        if not np.isclose(p1_B1_after, p2_B1_after, atol=tolerance) or \
+                not np.isclose(p1_B2_after, p2_B2_after, atol=tolerance):
+            print 'B tolerance not reached'
+            adj_setting = False
+
+    if return_part == 'all':
+        return dataframe['adjusted'].copy(), adj_setting
+    elif return_part == 'last':
+        return dataframe['adjusted'][breaktime+pd.DateOffset(1):].copy(), adj_setting
+    elif return_part == 'first':
+        return dataframe['adjusted'][:breaktime].copy(), adj_setting
+    else:
+        raise Exception("Select 'first' , 'last' or 'all' for part to return")
+
+def adjustment_params(data, breaktime):
+    '''
+    Model Data before/after breaktime via linear model, return Model paramters
+    :param data: pd.DataFrame
+    :param breaktime: datetime.datetime or str
+    :return: np.matrix, dict
+    '''
+    dataframe = data.copy()
+    dataframe = dataframe.dropna()
+    if isinstance(breaktime, str):
+        breaktime = datetime.strptime(breaktime, '%Y-%m-%d')
+
+
     i1 = dataframe[:breaktime]
-    i2 = dataframe[breaktime + pd.DateOffset(1):]
+    i2 = dataframe[breaktime:]
+
+    # What happens if timeframe before / after breaktime is not equally long
+
+    # if i1.index.size != i2.index.size:
+    #     if i1.index.size < i2.index.size:
+    #         i2 = i2[:i1.index.size]
+    #     elif i1.index.size > i2.index.size:
+    #         i1 = i1[-1 * i2.index.size:]
 
     B = []
     rval = []
@@ -292,67 +135,145 @@ def regression_adjustment(data, breaktime, adjust_param = 'both', adjust_part='f
     B = np.squeeze(np.asarray(B))
 
     regtest = {'R': rval, 'p': pval}
-    # print('Regression coefficients are: ' + str(regtest))
+
+    #TODO: activate tests
 
     if any(r < 0 for r in rval):
-        raise Exception('2: negative correlation found')
-    if any(p > 0.05 for p in pval):
-        raise Exception('3: positive correlation not significant')
+        raise Exception('2: negative correlation found (%s)' % str(rval))
+    if any(p > 0.1 for p in pval): # todo: war 0.05
+        raise Exception('3: positive correlation not significant (%s)' % str(pval))
 
-    if adjust_part == 'last':
-        # Perform the linear adjustment for testdata after the breaktime
-        cc = B[0][1] / B[1][1]
-        dd = B[0][0] - cc * B[1][0]
-        adjusted_part1 = dataframe[['testdata']][:breaktime]
-        if adjust_param == 'both':
-            adjusted_part2 = cc * dataframe[['testdata']][breaktime:] + dd
-            B1_aft_adjust = cc * B[1][0]
-            B2_aft_adjust = cc
-        elif adjust_param == 'add':
-            adjusted_part2 = dataframe[['testdata']][breaktime:] + dd
-            B1_aft_adjust = cc * B[1][0]
-            B2_aft_adjust = None
-        elif adjust_param == 'multi':
-            adjusted_part2 = cc * dataframe[['testdata']][breaktime:]
-            B1_aft_adjust = None
-            B2_aft_adjust = cc
-
-    elif adjust_part == 'first':
-        # Perform the linear adjustment for testdata before the breaktime
-        cc = B[1][1] / B[0][1]
-        dd = B[1][0] - cc * B[0][0]
-
-        adjusted_part2 = dataframe[['testdata']][breaktime:]
-        if adjust_param == 'both':
-            adjusted_part1 = cc * dataframe[['testdata']][:breaktime] + dd
-            B1_aft_adjust = cc * B[0][0]
-            B2_aft_adjust = cc
-        elif adjust_param == 'add':
-            adjusted_part1 = dataframe[['testdata']][:breaktime] + dd
-            B1_aft_adjust = cc * B[0][0]
-            B2_aft_adjust = None
-        elif adjust_param == 'multi':
-            adjusted_part2 = cc * dataframe[['testdata']][:breaktime]
-            B1_aft_adjust = None
-            B2_aft_adjust = cc
-    else:
-        raise Exception("Select 'first' or 'last' for part to adjust")
-
-    adj_setting = {'slope': cc, 'intercept': dd, 'part1_B1': B[0][0], 'part1_B2': B[0][1],
-                   'part2_B1': B[1][0], 'part2_B2': B[1][1],
-                   'B1_aft_adjust': B1_aft_adjust, 'B2_aft_adjust': B2_aft_adjust}
-
-    dataframe['adjusted'] = pd.concat([adjusted_part1, adjusted_part2])
-
-    if return_part == 'all':
-        return dataframe['adjusted'], adj_setting
-    elif return_part == 'last':
-        return dataframe['adjusted'][:breaktime], adj_setting
-    elif return_part == 'first':
-        return dataframe['adjusted'][breaktime:], adj_setting
-    else:
-        raise Exception("Select 'first' , 'last' or 'all' for part to return")
+    return B, regtest
 
 
 
-#run_adjustment()
+if __name__ == '__main__':
+    import warnings
+    warnings.filterwarnings('ignore')
+
+    from interface import HomogTest
+    from otherfunctions import regress
+    import matplotlib.dates as dates
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    import scipy.stats as stats
+    import numpy as np
+    from cci_timeframes import get_timeframes
+
+    test_obj = HomogTest('cci_31_combined',
+                         'merra2',
+                         ['wilkoxon', 'fligner_killeen'],
+                         0.01,
+                         False,
+                         None)
+
+
+
+    df_full = test_obj.read_gpi(433291, start=test_obj.range[0], end=test_obj.range[1])
+    for i, (timeframe, breaktime) in enumerate(zip(test_obj.timeframes, test_obj.breaktimes)):
+        print ' '
+        print ' '
+        print '================%s===============' % str(breaktime)
+        sett = False
+        j=0
+        while (not sett) and j < 5:
+            df = df_full[['testdata','refdata']][timeframe[0]:timeframe[1]]
+            df = df.dropna()
+            try:
+                corr, pval = test_obj.check_corr(df)
+                df, _, _ = test_obj.group_by_breaktime(df, breaktime, min_data_size=3,
+                                                         ignore_exception=False)  # TODO: different value?
+            except:
+                print 'TESTING FAILED'
+                break
+            # Correct bias in reference data
+            df['refdata'] = test_obj.ref_data_correction(df[['testdata', 'refdata']])
+            # Calculate difference TimeSeries
+            df['Q'] = df['testdata'] - df['refdata']
+            corr, p = test_obj.check_corr(df)
+            print '------------BEFORE ADJUSTMENT-----------'
+            print ('Correlation total: corr: %f , pval: %f' %(corr, p) )
+            # Run Tests
+            _, testresult = test_obj.run_tests(data=df)
+            print testresult
+            if testresult['fligner_killeen']['h'] == 0 and testresult['wilkoxon']['h'] == 0:
+                print 'Adjustment not necessary'
+                break
+            x1 = dates.date2num([pd.Timestamp(date).to_datetime() for date in df[:breaktime].index.values])
+            x2 = dates.date2num([pd.Timestamp(date).to_datetime() for date in df[breaktime:].index.values])
+
+            slope1, inter1, r1, p1, stderr1 = stats.linregress(x1, df['testdata'][:breaktime])
+            part1 = slope1 * x1 + inter1
+            print 'Variance part 1: %f' % np.var(part1)
+            print 'Mean part 1: %f' % np.mean(part1)
+            slope2, inter2, r2, p2, stderr2 = stats.linregress(x2, df['testdata'][breaktime:])
+            part2 = slope2 * x2 + inter2
+            print 'Variance part 2: %f' % np.var(part2)
+            print 'Mean part 2: %f' % np.mean(part2)
+            if part1.size+part2.size != df.index.size:
+                part2 = part2[1:]
+            df['testdata_ress_before'] = np.concatenate((part1, part2)) # breaktime overlaps, drop it for first set
+            df[['testdata', 'testdata_ress_before']].plot()
+
+            print('Testdata_preadjust: PART 1: slope: %f, intercept: %f' % (slope1, inter1))
+            print('Testdata_preadjust: PART 2: slope: %f, intercept: %f' % (slope2, inter2))
+            print '------------AFTER ADJUSTMENT-----------'
+            try:
+                B, regtest = adjustment_params(df[['testdata', 'refdata']],
+                                               breaktime)
+
+
+                ts_adjusted, sett = adjustment(df[['testdata', 'refdata']], B, breaktime,
+                                               adjust_param='both', adjust_part='first',
+                                               return_part='all' if i == 0 else 'first' , check_adjustment=True)
+                df_full.loc[ts_adjusted.index, 'testdata'] = ts_adjusted
+                j+=1
+
+            except Exception as e:
+                print 'Adjustment failed: %s' %e
+                continue
+
+        if not sett:
+            continue
+
+        print ('regtest: %s' % str(regtest))
+
+        testdata_before = df['testdata'].copy()
+
+
+
+        df = df_full[['testdata','refdata']][timeframe[0]:timeframe[1]]
+        df=df.dropna()
+        try:
+            corr, pval = test_obj.check_corr(df)
+            df, _, _ = test_obj.group_by_breaktime(df, breaktime, min_data_size=3,
+                                                     ignore_exception=False)  # TODO: different value?
+        except:
+            print 'TESTING FAILED'
+            pass
+        df['refdata'] = test_obj.ref_data_correction(df[['testdata', 'refdata']])
+        df['Q'] = df['testdata'] - df['refdata']
+        corr, p = test_obj.check_corr(df)
+        print ('Correlation total: corr: %f , pval: %f' %(corr, p) )
+        _, testresult = test_obj.run_tests(data=df)  # wilkoxon removed, fk not!!
+        print testresult
+
+        x1 = dates.date2num([pd.Timestamp(date).to_datetime() for date in df[:breaktime].index.values])
+        x2 = dates.date2num([pd.Timestamp(date).to_datetime() for date in df[breaktime:].index.values])
+        slope1, inter1, r1, p1, stderr1 = stats.linregress(x1, df['testdata'][:breaktime])
+        part1 = slope1 * x1 + inter1
+        print 'Variance part 1: %f' % np.var(part1)
+        print 'Mean part 1: %f' % np.mean(part1)
+        slope2, inter2, r2, p2, stderr2 = stats.linregress(x2, df['testdata'][breaktime:])
+        part2 = slope2 * x2 + inter2
+
+        if part1.size+part2.size != df.index.size:
+            part2=part2[1:]
+        print 'Variance part 2: %f' % np.var(part2)
+        print 'Mean part 2: %f' % np.mean(part2)
+        df['testdata_ress_after'] = np.concatenate((part1, part2))
+        df[['testdata', 'testdata_ress_after']].plot()
+        df['testdata_before'] =testdata_before
+        print('Testdata_aftadjust: PART 1: slope: %f, intercept: %f' % (slope1, inter1))
+        print('Testdata_aftadjust: PART 2: slope: %f, intercept: %f' % (slope2, inter2))
+        #df_roll = pd.rolling_mean(df[['testdata','testdata_before']], 5, 3)

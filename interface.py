@@ -48,11 +48,10 @@ class HomogTest(object):
             self.ismndata = ISMNdataUSA(self.timeframe, self.breaktime, max_depth=0.1)
         else:
         '''
-        self.data = QDEGdata_M(products=[self.ref_prod, self.test_prod])
+        self.data = QDEGdata_D(products=[self.ref_prod, self.test_prod])
 
         self.alpha = alpha
         self.anomaly = anomaly
-
         self._init_validate_cci_range()
 
         if adjusted_ts_path:
@@ -80,21 +79,37 @@ class HomogTest(object):
                 raise Exception('Selected Breaktimes not valid for product %s' % self.test_prod)
 
 
+    def check_testresult(self, testresult):
+        '''
+        Checks if all tests are negative (no break)
+        :param testresult: dict
+        :return: bool
+        '''
+        if all(h == 0 for h in [testresult[test]['h'] for test in self.tests]):
+            return True
+        else:
+            return False
+
+
     @staticmethod
-    def wk_test(dataframe, alternative='two-sided'):
+    def wk_test(dataframe, alternative='two-sided', alpha=0.01):
         # type: (pd.DataFrame, str) -> (float,dict)
 
         p_wk = stats.mannwhitneyu(dataframe['Q'].loc[dataframe['group'] == 0],
                                         dataframe['Q'].loc[dataframe['group'] == 1],
                                         alternative=alternative)[1]
         stats_wk = stats.ranksums(dataframe['Q'].loc[dataframe['group'] == 0],
-                                  dataframe['Q'].loc[dataframe['group'] == 1])[0]
-        
+                                  dataframe['Q'].loc[dataframe['group'] == 1])[0] #type: dict
 
-        return p_wk, stats_wk
+        if p_wk < alpha:
+            h = 1
+        else:
+            h = 0
+
+        return h, {'zval':stats_wk, 'pval': p_wk}
 
     @staticmethod
-    def fk_test(dataframe, mode='median', alpha=0):
+    def fk_test(dataframe, mode='median', alpha=0.01):
         # type: (pd.DataFrame, str, float) -> (int,dict)
         '''
         FKTEST Fligner-Killeen test for homogeneity of variances.
@@ -236,8 +251,7 @@ class HomogTest(object):
 
         return corr, pval
 
-
-    def group_by_breaktime(self, df_time, breaktime, min_data_size):
+    def group_by_breaktime(self, df_time, breaktime, min_data_size, ignore_exception=False):
         '''
         Divide Time Series into 2 subgroups according to breaktime (before/after)
         :param df_time: pd.DataFrame
@@ -255,11 +269,12 @@ class HomogTest(object):
         ni2 = len(i2.index)
 
         # Check if group data sizes are above selected minimum size
-        if ni1 < min_data_size or ni2 < min_data_size:
-            raise Exception('4: Minimum Dataseries Length not reached. Size is %i and/or %i !> %i'
-                            % (ni1, ni2, min_data_size))
+        if not ignore_exception:
+            if ni1 < min_data_size or ni2 < min_data_size:
+                raise Exception('4: Minimum Dataseries Length not reached. Size is %i and/or %i !> %i'
+                                % (ni1, ni2, min_data_size))
 
-        return df_time
+        return df_time, ni1, ni2
 
     def ref_data_correction(self, df_time):
         df_time['bias_corr_refdata'], rxy, pval, ress = regress(df_time)
@@ -282,14 +297,8 @@ class HomogTest(object):
         # Wilcoxon rank sum test
         if 'wilkoxon' in tests:
             try:
-                p_wk, stats_wk = self.wk_test(data, 'two-sided')
-
-                if p_wk < self.alpha:
-                    h_wk = 1
-                else:
-                    h_wk = 0
-
-                wilkoxon = {'h': h_wk, 'zval': stats_wk, 'p': p_wk}
+                h_wk, stats_wk = self.wk_test(data, 'two-sided')
+                wilkoxon = {'h': h_wk, 'stats': stats_wk}
             except:
                 wilkoxon = {'h': 'Error during WK testing'}
                 pass

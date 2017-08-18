@@ -48,14 +48,8 @@ class load_Log(object):
 
         return {'test_prod': test_prod, 'ref_prod': ref_prod}
 
-
 class Results2D(object):
-    '''
-    Baiscally a big DataFrame over all passed GPIs with function to flush and save data
-    '''
     def __init__(self, grid, path, breaktimes):
-        # type: (grids.CellGrid,str, list, int) -> None
-
         if not all(isinstance(breaktime, str) for breaktime in breaktimes):
             raise Exception("Breaktimes must be passed as list of strings")
 
@@ -65,8 +59,8 @@ class Results2D(object):
             os.mkdir(cell_files_path)
         self.cell_files_path = cell_files_path
         self.breaktimes = breaktimes
-        self.pre_process_grid = grid # type: grids.CellGrid
-        self.global_gpis=[]
+        self.pre_process_grid = grid  # type: grids.CellGrid
+        self.global_gpis = []
         self.data = {breaktime: {'gpi': []} for breaktime in self.breaktimes}
 
     def save_subgrid(self, gpis):
@@ -76,13 +70,14 @@ class Results2D(object):
         nc.save_grid(os.path.join(self.cell_files_path, filename),
                      grid=subgrid, subset_name='breaktest_flag',
                      subset_meaning='Tested Points')
-        return filename
 
+        return filename
 
     def reset_data(self):
         self.data = {breaktime: {'gpi': []} for breaktime in self.breaktimes}
 
-    def add_data(self, gpi, breaktime, gpi_result):
+
+    def add_data(self, gpi, breaktime, data_dict):
         '''
         Fill buffer by adding data for gpi
         :param gpi:
@@ -93,61 +88,11 @@ class Results2D(object):
         if gpi in self.data[breaktime]['gpi']:
             raise Exception("GPI already stored")
         else:
-            data_dict = {}
-            for name, resdict in gpi_result.iteritems():
-                if name == 'testresult':
-                    data_dict.update(self.extract_infos_test(resdict))
-                if name == 'adjresult':
-                    data_dict.update(self.extract_infos_adj(resdict))
-
             self.data[breaktime]['gpi'].append(gpi)
-
             for name, value in data_dict.iteritems():
                 if name not in self.data[breaktime].keys():
                     self.data[breaktime][name] = []
                 self.data[breaktime][name].append(value)
-
-
-    def extract_infos_test(self, data_dict):
-        # type: (dict) -> dict
-        status = int(data_dict['status_test'][0])
-        if status not in [0, 6, 7]:
-            return {'h_wk': np.nan, 'h_fk': np.nan, 'test_results': np.nan, 'status_test': status}
-        else:
-            wk = data_dict['wilkoxon']['h']
-            fk = data_dict['fligner_killeen']['h']
-
-            if type(wk) is str:
-                # wk test failed and contains error message
-                wk = np.nan
-                status = 6 # This is just an identification number, no math meaning
-            if type(fk) is str:
-                # fk failed and contains error message
-                fk = np.nan
-                status = 7 # This is just an identification number, no math meaning
-
-            all = 4.0
-            if wk == 1:
-                if fk == 1:
-                    all = 3.0
-                else:
-                    all = 1.0
-            elif fk == 1:
-                all = 2.0
-
-            return {'h_wk': wk, 'h_fk': fk, 'test_results': all, 'status_test': status}
-
-    def extract_infos_adj(self, data_dict):
-        # type: (dict) -> dict
-        status = int(data_dict['status_adj'][0])
-        if status not in [0]:
-            return {'slope': np.nan, 'intercept': np.nan, 'part1_B1': np.nan, 'part1_B2': np.nan,
-                   'part2_B1': np.nan, 'part2_B2': np.nan,
-                   'B1_aft_adjust': np.nan, 'B2_aft_adjust': np.nan, 'status_adj': status}
-        else:
-            data_dict['status_adj'] = status
-        return data_dict
-
 
     def save_to_gridded_netcdf(self):
 
@@ -180,6 +125,48 @@ class Results2D(object):
         self.reset_data()
         self.global_gpis=[]
         return return_gpis
+
+
+def extract_test_infos(data_dict):
+    # type: (dict) -> dict
+    status = int(data_dict['test_status'][0])
+    if status not in [0, 6, 7]:
+        return {'h_wk': np.nan, 'h_fk': np.nan, 'test_results': np.nan, 'test_status': status}
+    else:
+        wk = data_dict['wilkoxon']['h']
+        fk = data_dict['fligner_killeen']['h']
+
+        if type(wk) is str:
+            # wk test failed and contains error message
+            wk = np.nan
+            status = 6 # This is just an identification number, no math meaning
+        if type(fk) is str:
+            # fk failed and contains error message
+            fk = np.nan
+            status = 7 # This is just an identification number, no math meaning
+
+        all = 4.0
+        if wk == 1:
+            if fk == 1:
+                all = 3.0
+            else:
+                all = 1.0
+        elif fk == 1:
+            all = 2.0
+
+        return {'h_wk': wk, 'h_fk': fk, 'test_results': all, 'test_status': status}
+
+
+def extract_adjust_infos(data_dict):
+    # type: (dict) -> dict
+    status = int(data_dict['adj_status'][0])
+    if status not in [0]:
+        return {'slope': np.nan, 'intercept': np.nan, 'part1_B1': np.nan, 'part1_B2': np.nan,
+                'part2_B1': np.nan, 'part2_B2': np.nan, 'adj_status': status}
+    else:
+        data_dict['adj_status'] = status
+
+        return data_dict  #DataDict from Adjustment incl. status
 
 
 
@@ -216,7 +203,7 @@ class GlobalResults(object):
         file_meta_dict = {
             'test_results': 'Break detection classes by Hopothesis tests.'
                             '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None',
-            'status_test': '0 = Processing OK,'
+            'test_status': '0 = Processing OK,'
                       '1 = No coinciding data for timeframe,'
                       '2 = Test TS and Ref TS do not match,'
                       '3 = Spearman correlation too low,'
@@ -225,12 +212,14 @@ class GlobalResults(object):
                       '6 = Error during WK testing,'
                       '7 = Error during FK testing,'
                       '8 = WK test and FK test failed,'
-                      '9 = Error reading gpi'}
-
-           # 'status_adj': '0: Adjustment performed,'
-           #         '1 = No adjustment necessary,'
-           #         '2 = negative correlation,'
-           #         '3 = positive correlation insignificant'}
+                      '9 = Error reading gpi',
+            'adj_status': '0: Adjustment performed,'
+                     '1 = No adjustment necessary,'
+                     '2 = negative correlation,'
+                     '3 = positive correlation insignificant,'
+                     '4 = Model param 1 not sufficiently adapted,'
+                     '5 = Model param 2 not sufficiently adapted'
+                     '9 = Not adjusted' }
 
         global_file = xr.open_dataset(os.path.join(self.path, self.fn_global))
         df = global_file.to_dataframe()

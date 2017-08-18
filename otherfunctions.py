@@ -14,7 +14,6 @@ from scipy import io
 import os
 from datetime import datetime
 
-
 def regress(data):
     '''
     Perform regression of column refdata on column testdata
@@ -41,6 +40,23 @@ def regress(data):
 
     return pd.Series(index=dataframe.index, data=np.squeeze(np.asarray(out))), R, pval, ress
 
+
+def resample_to_monthly(df, threshold=10):
+    '''
+    Resample a dataframe to monthly values, if the number of valid values (not nans) in a month
+    is smaller than the defined threshold, the monthly resample will be NaN
+
+    :param threshold: int
+        minimum number of days to resample to monthly
+    :return: pd.DataFrame
+        The monthly resampled Data
+    '''
+    concat = []
+    for column in df.columns.values:
+        resampled = df[[column]].groupby(pd.TimeGrouper("M")).filter(lambda g: g.count() > 10).resample('M').mean()
+        concat.append(resampled)
+
+    return pd.concat(concat, axis = 1)
 
 def datetime2matlabdn(dt):
     ord = dt.toordinal()

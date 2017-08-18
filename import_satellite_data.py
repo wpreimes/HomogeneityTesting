@@ -42,7 +42,6 @@ def read_warp_ssm(ssm, ssf, gpi):
 
 class QDEGdata_M(object):
     def __init__(self, products):
-        self.lkup = pd.read_csv(r"H:\HomogeneityTesting_data\merra_gpi_LUT.csv", index_col=0)
         self.monthproducts = {}
         m_otherproduts = []
         self.m_otherdata = None
@@ -56,6 +55,8 @@ class QDEGdata_M(object):
             m_otherproduts.append('gldas-merged')
         if 'trmm' in products:
             m_otherproduts.append('trmm')
+        if 'merra2' in products:
+            m_otherproduts.append('merra2')
 
         cci_re = re.compile("cci_.+")
         if any([cci_re.match(product) for product in products]):
@@ -75,13 +76,6 @@ class QDEGdata_M(object):
                 raise Exception('Found no adjusted CCI files')
             self.monthproducts['adjusted_cci'] = cciAdjustedTs(path_adjustedcci)
 
-        if 'merra2' in products:
-            if os.path.isdir(r'D:\USERS\wpreimes\datasets\MERRA2_M'):
-                print('Found local files for merra2')
-                path_merra2 = r'D:\USERS\wpreimes\datasets\MERRA2_M'
-            else:
-                path_merra2 = r"U:\datasets\MERRA\MERRA\MERRA2_MONTHLY\Timeseries_SM"
-            self.monthproducts['merra2'] = MERRA2_Ts(path_merra2)
 
         if 'gldas-merged-from-file' in products:  # Monthly merged GLDAS Data for faster loading
             if os.path.isdir(r"D:\USERS\wpreimes\datasets\GLDAS-NOAH\GLDAS_NOAH_merged_M_at0"):
@@ -151,27 +145,6 @@ class QDEGdata_M(object):
             else:
                 data_group = pd.concat([data_group, ts_adjusted_cci.rename('adjusted_cci')], axis=1)
 
-        if 'merra2' in self.monthproducts.keys():
-            try:
-                gpi_merra = self.lkup.loc[gpi].gpi_merra
-                ts_merra2 = self.monthproducts['merra2'].read_ts(gpi_merra)['GWETTOP']
-                ts_merra2 = ts_merra2.resample('M').mean()
-                ts_merra2 = ts_merra2 * 100
-            except:
-                ts_merra2 = pd.Series(index=pd.date_range(start=startdate, end=enddate))
-                ts_merra2 = ts_merra2.resample('M').mean()
-
-            if ts_merra2.isnull().all():
-                # print 'No merra2 data for gpi %i' % gpi
-                pass
-            ts_merra2.index = ts_merra2.index.to_datetime().date
-            ts_merra2.index = ts_merra2.index.to_datetime()
-
-            if data_group.empty:
-                data_group['merra2'] = ts_merra2
-            else:
-                data_group = pd.concat([data_group, ts_merra2.rename('merra2')], axis=1)
-
         return data_group[startdate:enddate]
 
 
@@ -221,14 +194,23 @@ class QDEGdata_D(object):
                         raise Exception('cci version or product not known...use format cci_XX_PRODUCT')
 
                     if os.path.isdir(r'D:\USERS\wpreimes\datasets\CCI_%s_D' % version):
-                        print('Found local files for cci_%s data' % version)
+                        print('Found local files for daily cci_%s data' % version)
                     else:
-                        print('Try files for cci_%s data on R' % version)
+                        print('Try files for daily cci_%s data on R' % version)
                     cci = ESA_CCI_SM('ESA_CCI_SM_v0%s.%s' % (version[0], version[1]),
                                      parameter=type,
                                      cfg_path=r"H:\HomogeneityTesting_data\cci_cfg_local")
 
                     self.dayproducts[cci_product] = cci
+
+        if 'merra2' in products:
+            self.lkup = pd.read_csv(r"H:\HomogeneityTesting_data\merra_gpi_LUT.csv", index_col=0)
+            if os.path.isdir(r"D:\users\wpreimes\datasets\MERRA2_D\ts_daily_0030"):
+                print('Found local files for daily merra2')
+                path_merra2 = r'D:\users\wpreimes\datasets\MERRA2_D\ts_daily_0030'
+            else:
+                path_merra2 = r"R:\Datapool_processed\Earth2Observe\MERRA2\M2T1NXLND.5.12.4\datasets\ts_daily_0030"
+            self.dayproducts['merra2'] = MERRA2_Ts(path_merra2)
 
     def read_gpi(self, gpi, startdate, enddate):
         """
@@ -292,6 +274,27 @@ class QDEGdata_D(object):
                     data_group = pd.concat([data_group, df_cci['sm'].rename('%s' % name)], axis=1)
                 else:
                     data_group = pd.concat([data_group, df_cci], axis=1)
+
+        if 'merra2' in self.dayproducts.keys():
+            try:
+                gpi_merra = self.lkup.loc[gpi].gpi_merra
+                ts_merra2 = self.dayproducts['merra2'].read(gpi_merra)['GWETTOP']
+                ts_merra2 = ts_merra2.resample('D').mean()
+                ts_merra2 = ts_merra2 * 100
+            except:
+                ts_merra2 = pd.Series(index=pd.date_range(start=startdate, end=enddate))
+                ts_merra2 = ts.resample('D').mean()
+
+            if ts_merra2.isnull().all():
+                # print 'No merra2 data for gpi %i' % gpi
+                pass
+            ts_merra2.index = ts_merra2.index.to_datetime().date
+            ts_merra2.index = ts_merra2.index.to_datetime()
+
+            if data_group.empty:
+                data_group['merra2'] = ts_merra2
+            else:
+                data_group = pd.concat([data_group, ts_merra2.rename('merra2')], axis=1)
 
         if 'trmm' in self.dayproducts.keys():
             try:
@@ -419,9 +422,9 @@ class QDEGdata_3H(object):
 
 if __name__ == '__main__':
     from grid_functions import cells_for_continent
-    gpi = 736153
-    timeframe = [datetime(1990,1,1), datetime(2015,12,31)]
-    data = QDEGdata_M(products=['merra2', 'cci_31_combined'])
+    gpi = 367005
+    timeframe = [datetime(1991,8,1), datetime(2002,7,1)]
+    data = QDEGdata_D(products=['merra2', 'cci_31_combined'])
     ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
     bias_corr_refdata, rxy, pval, ress = regress(
         ts[['cci_31_combined', 'merra2']].rename(columns={'cci_31_combined': 'testdata', 'merra2': 'refdata'}))
