@@ -9,7 +9,7 @@ import numpy as np
 import scipy.stats as stats
 import pandas as pd
 
-def adjustment(data, B, breaktime, adjust_param = 'both', adjust_part='first', return_part='all',
+def adjustment(data_daily, B, breaktime, adjust_param = 'both', adjust_part='first', return_part='all',
                check_adjustment=False):
     '''
     :param data: pd.DataFrame
@@ -28,7 +28,8 @@ def adjustment(data, B, breaktime, adjust_param = 'both', adjust_part='first', r
     :return: pd.DataFrame, dict
     '''
 
-    dataframe = data.copy()
+    dataframe = data_daily.copy()
+
 
     if adjust_part == 'last':
         # Perform the linear adjustment for testdata after the breaktime
@@ -61,37 +62,52 @@ def adjustment(data, B, breaktime, adjust_param = 'both', adjust_part='first', r
     else:
         raise Exception("Select 'first' or 'last' for part to adjust")
 
-    adj_setting = {'slope': cc, 'intercept': dd, 'part1_B1': B[0][0], 'part1_B2': B[0][1],
-                   'part2_B1': B[1][0], 'part2_B2': B[1][1]}
-
     dataframe['adjusted'] = pd.concat([adjusted_part1, adjusted_part2])
 
     if check_adjustment:
-        tolerance = 0.01 # TODO: für monthly weniger streng als für daily
-        re_adjusted, re_sett = \
-            adjustment(dataframe[['adjusted','refdata']].rename(columns={'adjusted':'testdata'}),
-                                  B, breaktime, adjust_param, adjust_part, return_part, check_adjustment=False)
+        tolerance = 0.05 # TODO: für monthly weniger streng als für daily
+        B, corr = adjustment_params(dataframe[['adjusted','refdata']].rename(columns={'adjusted':'testdata'}),
+                                    breaktime)
 
-        print 'Adjustment settings:'
-        print re_sett
+        print 'B after adjustment: %s' %str(B.flatten())
 
-        p1_B1_after = re_sett['part1_B1']
-        p1_B2_after = re_sett['part1_B2']
+        p1_B1_after = B[0][0]
+        p1_B2_after = B[0][1]
 
-        p2_B1_after = re_sett['part2_B1']
-        p2_B2_after = re_sett['part2_B2']
+        p2_B1_after = B[1][0]
+        p2_B2_after = B[1][1]
 
         if not np.isclose(p1_B1_after, p2_B1_after, atol=tolerance) or \
                 not np.isclose(p1_B2_after, p2_B2_after, atol=tolerance):
-            print 'B tolerance not reached'
-            adj_setting = False
+            # !!!!!!!!!!RECURSIVE PART!!!!!!!!!!!!!!!
+            print 'B tolerance after adjustment not reached, retrying'
+            # Take adjusted data from first iteration
+            dataframe = dataframe[['adjusted', 'refdata']].rename(columns={'adjusted': 'testdata'})
+            # Retry adjustment with adjusted data and new B
+            adjusted, adj_setting = adjustment(dataframe, B, breaktime, adjust_param, adjust_part, return_part,
+                                               check_adjustment=True)
+
+            dataframe['adjusted'] = adjusted
+
+            if return_part == 'all':
+                return dataframe['adjusted'], adj_setting
+            elif return_part == 'last':
+                return dataframe['adjusted'][breaktime+pd.DateOffset(1):], adj_setting
+            elif return_part == 'first':
+                return dataframe['adjusted'][:breaktime], adj_setting
+            else:
+                raise Exception("Select 'first' , 'last' or 'all' for part to return")
+
+    # !!!!!!!!!!ESCAPE PART!!!!!!!!!!!!!!!
+    adj_setting = {'slope': cc, 'intercept': dd, 'part1_B1': B[0][0], 'part1_B2': B[0][1],
+                   'part2_B1': B[1][0], 'part2_B2': B[1][1]}
 
     if return_part == 'all':
-        return dataframe['adjusted'].copy(), adj_setting
+        return dataframe['adjusted'], adj_setting
     elif return_part == 'last':
-        return dataframe['adjusted'][breaktime+pd.DateOffset(1):].copy(), adj_setting
+        return dataframe['adjusted'][breaktime+pd.DateOffset(1):], adj_setting
     elif return_part == 'first':
-        return dataframe['adjusted'][:breaktime].copy(), adj_setting
+        return dataframe['adjusted'][:breaktime], adj_setting
     else:
         raise Exception("Select 'first' , 'last' or 'all' for part to return")
 
@@ -111,7 +127,7 @@ def adjustment_params(data, breaktime):
     i1 = dataframe[:breaktime]
     i2 = dataframe[breaktime:]
 
-    # What happens if timeframe before / after breaktime is not equally long
+    # TODO: What happens if timeframe before / after breaktime is not equally long
 
     # if i1.index.size != i2.index.size:
     #     if i1.index.size < i2.index.size:
@@ -166,8 +182,6 @@ if __name__ == '__main__':
                          0.01,
                          False,
                          None)
-
-
 
     df_full = test_obj.read_gpi(433291, start=test_obj.range[0], end=test_obj.range[1])
     for i, (timeframe, breaktime) in enumerate(zip(test_obj.timeframes, test_obj.breaktimes)):

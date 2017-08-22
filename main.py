@@ -86,6 +86,7 @@ def csv_read_write(csv_path, mode, data=None):
 
 def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_prod, anomaly, process_no,
                       adjusted_ts_path=None):
+
     # Function for multicore processing
 
     print('Start process %i' % process_no)
@@ -135,21 +136,25 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
                 retries = 0
                 adjresult = False
                 testresult = False
+                # In case that after adjustment a break is still found, re-correct the reference data to
+                # the (insufficiently) corrected test data and repeat adjustment (< max_retries times)
                 while retries < max_retries and (not testresult or
                                                      not test_obj.check_testresult(testresult)):
                     # Cut data to timeframe
                     data_daily = df_time[timeframe[0]:timeframe[1]] # keep this for adjustment
-                    data = resample_to_monthly(data_daily, min_monthly_values) #resample to monthly values
                     try:  # Homogeneity Testing
-                        data = data.dropna()
+                        data_daily = data_daily.dropna()
+                        # Correct bias in reference data
+                        data_daily['refdata'] = test_obj.ref_data_correction(data_daily[['testdata', 'refdata']])
+                        # resample to monthly value
+                        data = resample_to_monthly(data_daily, min_monthly_values).dropna()
                         # Checks if there is data left and calculates spearman correlation
                         corr, pval = test_obj.check_corr(data)
                         data, _, _= test_obj.group_by_breaktime(data,
                                                                 breaktime,
                                                                 min_data_size=3, # TODO: different value?
                                                                 ignore_exception=False)
-                        # Correct bias in reference data
-                        data['refdata'] = test_obj.ref_data_correction(data[['testdata', 'refdata']])
+
                         # Calculate difference TimeSeries
                         data['Q'] = data['testdata'] - data['refdata']
                         # Run Tests
@@ -161,10 +166,10 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
 
                     if test_obj.check_testresult(testresult) == True: # no break was found
                         if retries == 0:
-                            print 'Adjustment not necessary'
+                            print '%s: Adjustment not necessary' % str(breaktime.date())
                             break  # No breaks found, escape loop
                         else:  # break was removed, escape loop
-                            print '%i: Break removed after %i retries' % (gpi, retries)
+                            print '%s: Break removed after %i retries' % (str(breaktime.date()), retries)
                             break
                     elif adjusted_ts_path:  # break was found, attempt adjustment
                         '''
@@ -179,17 +184,17 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
                         5) Iterate over all gpis
                         '''
                         try:  # Time Series Adjustment
-                            B, corr = adjustment_params(data=data_daily,   #todo: or monthly??
-                                                        breaktime = breaktime)
+                            B, corr = adjustment_params(data=data,   #todo: or monthly??
+                                                        breaktime=breaktime)
 
 
-                            adjusted, adjresult = adjustment(data=data_daily,
+                            adjusted, adjresult = adjustment(data_daily=data_daily,
                                                              B=B,
                                                              breaktime=breaktime,
                                                              adjust_param='both',
                                                              adjust_part='first',
                                                              return_part='all' if i == 0 else 'first',
-                                                             check_adjustment=False)
+                                                             check_adjustment=True)
 
 
                             adjresult.update({'adj_status': '0: Adjustment performed'})
@@ -205,8 +210,8 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
                         break
 
                 # Merge test results and adjustresults for gpi and add to save object
-                if testresult['test_status'][0] == 0 and not test_obj.check_testresult(testresult): #todo: ugly
-                    print ('SORRY: Could not remove break after %i retries :(' % max_retries)
+                if testresult['test_status'][0] == '0' and not test_obj.check_testresult(testresult): #todo: ugly
+                    print ('%s: Could not remove break after %i retries :(' % (str(breaktime.date()), max_retries))
                 testresult = extract_test_infos(testresult)
                 if not adjresult:
                     adjresult = {'adj_status': '9: Not adjusted'}
@@ -262,7 +267,8 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
         else:
             cells = cells_for_continent(cells)
 
-    save_obj = Results2D(grid, workfolder, breaktimes)
+    save_obj = Results2D(grid, workfolder, breaktimes,
+                         cell_files_path=r"D:\users\wpreimes\datasets\temp_homogtest_cellfiles")
 
     processes = []
     q = Queue()
@@ -288,7 +294,7 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
     log_file.add_line('Saved Grid of Tested Points: %s' % gridfile)
 
     # Global files and images from testing
-    save_obj = GlobalResults(workfolder, 'gridded_files', breaktimes)
+    save_obj = GlobalResults(save_obj)
     global_file_name = save_obj.save_global_file(keep_cell_files=True)  # Merge test result cell files to global file
     log_file.add_line('Merged files to global file: %s' % global_file_name)
     image_files_names = save_obj.create_image_files()  # Create 2D image files from test results
@@ -317,8 +323,8 @@ if __name__ == '__main__':
     start('cci_31_combined',
           'merra2',
           r'H:\HomogeneityTesting_data\output',
-          cells='global',
+          cells='Australia',
           skip_times=None,
           anomaly=False,
           adjusted_ts_path=r"D:\users\wpreimes\datasets\CCI_31_D\050_combinedProduct\adjusted",
-          parallel_processes=1)
+          parallel_processes=8)

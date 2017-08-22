@@ -179,7 +179,7 @@ class QDEGdata_D(object):
 
         # Add Daily Products
         # TODO: before adding versions: Add cfg file and add data pathes in cfgfile
-        cci_versions = ['22', '31', '33']
+        cci_versions = ['22', '31', '33', '40']
         cci_types = ['COMBINED', 'ACTIVE', 'PASSIVE']
 
         cci_res = [re.compile("cci_%s.+" % version) for version in cci_versions]

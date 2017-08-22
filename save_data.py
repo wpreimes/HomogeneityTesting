@@ -49,19 +49,26 @@ class load_Log(object):
         return {'test_prod': test_prod, 'ref_prod': ref_prod}
 
 class Results2D(object):
-    def __init__(self, grid, path, breaktimes):
+    def __init__(self, grid, path, breaktimes, cell_files_path=None):
         if not all(isinstance(breaktime, str) for breaktime in breaktimes):
             raise Exception("Breaktimes must be passed as list of strings")
 
         self.path = path
-        cell_files_path = os.path.join(self.path, 'gridded_files')
-        if not os.path.isdir(cell_files_path):
-            os.mkdir(cell_files_path)
-        self.cell_files_path = cell_files_path
+        if not cell_files_path:
+            cell_files_path = os.path.join(self.path, 'gridded_files')
+            if not os.path.isdir(cell_files_path):
+                os.mkdir(cell_files_path)
+        self.cell_files_path = self._init_empty_temp_files(cell_files_path)
         self.breaktimes = breaktimes
         self.pre_process_grid = grid  # type: grids.CellGrid
         self.global_gpis = []
         self.data = {breaktime: {'gpi': []} for breaktime in self.breaktimes}
+
+    def _init_empty_temp_files(self, files_path):
+        files = os.listdir(files_path)
+        for file in files:
+            os.remove(os.path.join(files_path, file))
+        return files_path
 
     def save_subgrid(self, gpis):
         filename = 'breaktest_grid.nc'
@@ -170,22 +177,26 @@ def extract_adjust_infos(data_dict):
 
 
 
-class GlobalResults(object):
+class GlobalResults(Results2D):
 
-    def __init__(self, path, cellfiles_folder, breaktimes):
-        self.path = path
-        self.cellfile_dir = os.path.join(path, cellfiles_folder)
-        self.breaktimes = breaktimes
+    def __init__(self, baseObject):
+        self.__class__ = type(baseObject.__class__.__name__,
+                              (self.__class__, baseObject.__class__),
+                              {})
+
+        self.path = baseObject.path
+        self.cell_files_path = baseObject.cell_files_path
+        self.breaktimes = baseObject.breaktimes
         self.fn_global = 'homogtest_global.nc'
         self.fn_images_base = 'HomogeneityTestResult_%s_image.nc'
-        self.gpis = nc.load_grid(os.path.join(self.cellfile_dir,'breaktest_grid.nc')).get_grid_points()[0]
+        self.gpis = nc.load_grid(os.path.join(self.cell_files_path,'breaktest_grid.nc')).get_grid_points()[0]
 
         landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
         self.post_process_grid = landgrid.subgrid_from_gpis(self.gpis)
 
     def save_global_file(self, keep_cell_files=False):
 
-        with GriddedPointData(self.cellfile_dir, grid=self.post_process_grid,
+        with GriddedPointData(self.cell_files_path, grid=self.post_process_grid,
                               fn_format='{:04d}.nc') as nc:
 
             nc.to_point_data(os.path.join(self.path, self.fn_global))
@@ -195,7 +206,7 @@ class GlobalResults(object):
                 filename = str(cell)
                 while len(filename) < 4:
                     filename = str(0) + filename
-                os.remove(os.path.join(self.cellfile_dir, filename+'.nc'))
+                os.remove(os.path.join(self.cell_files_path, filename+'.nc'))
         return self.fn_global
 
     def create_image_files(self):
@@ -203,7 +214,7 @@ class GlobalResults(object):
         file_meta_dict = {
             'test_results': 'Break detection classes by Hopothesis tests.'
                             '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None',
-            'test_status': '0 = Processing OK,'
+            'test_status': '0 = Testing performed,'
                       '1 = No coinciding data for timeframe,'
                       '2 = Test TS and Ref TS do not match,'
                       '3 = Spearman correlation too low,'
@@ -218,7 +229,8 @@ class GlobalResults(object):
                      '2 = negative correlation,'
                      '3 = positive correlation insignificant,'
                      '4 = Model param 1 not sufficiently adapted,'
-                     '5 = Model param 2 not sufficiently adapted'
+                     '5 = Model param 2 not sufficiently adapted,'
+                     '6 = B tolerance after adj. not reached,'
                      '9 = Not adjusted' }
 
         global_file = xr.open_dataset(os.path.join(self.path, self.fn_global))
