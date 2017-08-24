@@ -9,8 +9,32 @@ import numpy as np
 import scipy.stats as stats
 import pandas as pd
 
+def compare_B(B, adjust_param, tolerance = 0.05):
+    p1_B1_after = B[0][0] #add
+    p1_B2_after = B[0][1] #mult
+
+    p2_B1_after = B[1][0] #add
+    p2_B2_after = B[1][1] #mult
+
+    if adjust_param == 'both':
+        if not np.isclose(p1_B1_after, p2_B1_after, atol=tolerance) or \
+                not np.isclose(p1_B2_after, p2_B2_after, atol=tolerance):
+            return False
+        else:
+            return True
+    if adjust_param == 'add':
+        if not np.isclose(p1_B1_after, p2_B1_after, atol=tolerance):
+            return False
+        else:
+            return True
+    if adjust_param == 'mult':
+        if not np.isclose(p1_B2_after, p2_B2_after, atol=tolerance):
+            return False
+        else:
+            return True
+
 def adjustment(data_daily, B, breaktime, adjust_param = 'both', adjust_part='first', return_part='all',
-               check_adjustment=False):
+               check_adjustment=False, nbr_rec=0):
     '''
     :param data: pd.DataFrame
         from Homogeneity Testing, must not contain nan
@@ -41,7 +65,7 @@ def adjustment(data_daily, B, breaktime, adjust_param = 'both', adjust_part='fir
             adjusted_part2 = cc * dataframe[['testdata']][breaktime:] + dd
         elif adjust_param == 'add':
             adjusted_part2 = dataframe[['testdata']][breaktime:] + dd
-        elif adjust_param == 'multi':
+        elif adjust_param == 'mult':
             adjusted_part2 = cc * dataframe[['testdata']][breaktime:]
         adjusted_part2 = adjusted_part2[breaktime + pd.DateOffset(1):]
 
@@ -55,7 +79,7 @@ def adjustment(data_daily, B, breaktime, adjust_param = 'both', adjust_part='fir
             adjusted_part1 = cc * dataframe[['testdata']][:breaktime] + dd
         elif adjust_param == 'add':
             adjusted_part1 = dataframe[['testdata']][:breaktime] + dd
-        elif adjust_param == 'multi':
+        elif adjust_param == 'mult':
             adjusted_part1 = cc * dataframe[['testdata']][:breaktime]
         adjusted_part1 = adjusted_part1
 
@@ -71,21 +95,16 @@ def adjustment(data_daily, B, breaktime, adjust_param = 'both', adjust_part='fir
 
         print 'B after adjustment: %s' %str(B.flatten())
 
-        p1_B1_after = B[0][0]
-        p1_B2_after = B[0][1]
-
-        p2_B1_after = B[1][0]
-        p2_B2_after = B[1][1]
-
-        if not np.isclose(p1_B1_after, p2_B1_after, atol=tolerance) or \
-                not np.isclose(p1_B2_after, p2_B2_after, atol=tolerance):
+        if not compare_B(B, adjust_param, tolerance):
+            if nbr_rec > 20:
+                print 'B tolerance after %i retries not reached' % nbr_rec
+                raise Exception('6: B tolerance after adjustment not reached')
             # !!!!!!!!!!RECURSIVE PART!!!!!!!!!!!!!!!
-            print 'B tolerance after adjustment not reached, retrying'
             # Take adjusted data from first iteration
             dataframe = dataframe[['adjusted', 'refdata']].rename(columns={'adjusted': 'testdata'})
             # Retry adjustment with adjusted data and new B
             adjusted, adj_setting = adjustment(dataframe, B, breaktime, adjust_param, adjust_part, return_part,
-                                               check_adjustment=True)
+                                               check_adjustment=True,nbr_rec=nbr_rec+1)
 
             dataframe['adjusted'] = adjusted
 

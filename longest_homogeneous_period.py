@@ -16,7 +16,7 @@ from save_data import load_Log
 import re
 from datetime import datetime
 from otherfunctions import dt_to_dec
-from cci_timeframes import get_timeframes
+from cci_timeframes import CCITimes
 from typing import Union
 
 def calc_longest_homogeneous_period(workdir, file_pattern='HomogeneityTestResult_*.nc'):
@@ -36,8 +36,7 @@ def calc_longest_homogeneous_period(workdir, file_pattern='HomogeneityTestResult
     products = log.get_products()
     ref_prod = products['ref_prod']
     test_prod = products['test_prod']
-
-    mergetimes = get_timeframes(test_prod)
+    mergetimes = CCITimes(test_prod).get_times(ignore_conditions=True)
     breaktimes = mergetimes['breaktimes']
 
     dates = [datetime.strptime(ts, "%Y-%m-%d") for ts in breaktimes]

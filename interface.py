@@ -13,7 +13,7 @@ from pytesmo.time_series.anomaly import calc_anomaly
 
 from datetime import datetime
 
-from cci_timeframes import get_timeframes
+from cci_timeframes import CCITimes
 from otherfunctions import regress, datetime2matlabdn
 from import_satellite_data import QDEGdata_M, QDEGdata_D
 from import_ismn_data import ISMNdataUSA
@@ -35,12 +35,7 @@ class HomogTest(object):
         '''
         self.ref_prod = ref_prod
         self.test_prod = test_prod
-
-        test_prod_times = get_timeframes(test_prod, as_datetime=True)
-        self.breaktimes =test_prod_times['breaktimes']
-        self.timeframes = test_prod_times['timeframes']
-        self.range = test_prod_times['ranges']
-
+        self.range = CCITimes(test_prod).ranges
         self.tests = tests
         '''
         if self.ref_prod == 'ISMN-merge':
@@ -52,31 +47,10 @@ class HomogTest(object):
 
         self.alpha = alpha
         self.anomaly = anomaly
-        self._init_validate_cci_range()
 
         if adjusted_ts_path:
             self.adjusted_ts_path = adjusted_ts_path
 
-
-    def _init_validate_cci_range(self):
-        # TODO: Not needed anymore
-        # type: (None) -> None
-        '''
-        cci_re = {name: re.compile("%s.+" % name) for name in valid_ranges.keys()}
-        if not any([cci_re[version].match(self.test_prod) for version, x in cci_re.iteritems()]):
-            raise Exception('Unknown Test Product')
-        else:
-        
-        prefix, version, type = self.test_prod.split('_')
-        name = prefix + '_' + version
-        '''
-        for timeframe in self.timeframes:
-            for startend in timeframe:
-                if not self.range[0] <= startend <= self.range[1]:
-                    raise Exception('Selected Timeframe is not valid for product %s' % self.test_prod)
-        for breaktime in self.breaktimes:
-            if not self.range[0] <= breaktime <= self.range[1]:
-                raise Exception('Selected Breaktimes not valid for product %s' % self.test_prod)
 
 
     def check_testresult(self, testresult):
@@ -86,9 +60,14 @@ class HomogTest(object):
         :return: bool
         '''
         if all(h == 0 for h in [testresult[test]['h'] for test in self.tests]):
-            return True
+            return None, True
         else:
-            return False
+            break_found_by=[]
+            for test in self.tests:
+                if testresult[test]['h'] == 1:
+                    break_found_by.append(test)
+
+            return break_found_by, False
 
 
     @staticmethod

@@ -4,12 +4,15 @@ Created on Wed Mar 22 17:06:28 2017
 
 @author: wpreimes
 """
+import sys
+from rsdata import root_path
+import os
+
 import numpy as np
-import os, glob
 
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
-from cci_timeframes import get_timeframes
+from cci_timeframes import CCITimes
 import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 from datetime import datetime
@@ -21,10 +24,11 @@ import xarray as xr
 from interface import HomogTest
 from pygeogrids.netcdf import load_grid
 from otherfunctions import resample_to_monthly
-from grid_functions import cells_for_continent
 
+import platform
 
 def valid_months_plot(workdir, cci_product, min_monthly_values):
+
     #NOT IN PROCESS
 
     # Count the number of valid months i.e, month that contain >=
@@ -33,13 +37,10 @@ def valid_months_plot(workdir, cci_product, min_monthly_values):
     #Count values BEFORE breaktime
 
     #Count value AFTER breaktime
-    times = get_timeframes(cci_product)
+    time_obj = CCITimes(cci_product)
 
-    starts = np.flipud(np.array([timeframe[0] for timeframe in times['timeframes']]))
-    ends = np.flipud(np.array([timeframe[1] for timeframe in times['timeframes']]))
-    breaktimes = np.flipud(times['breaktimes'])
+    grid = load_grid(os.path.join(root_path.u,'datasets','grids','qdeg_land_grid.nc'))#type: CellGrid()
 
-    grid = load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc") #type: CellGrid()
 
     #grid = grid.subgrid_from_cells([777]) #TODO: Delete
 
@@ -50,13 +51,18 @@ def valid_months_plot(workdir, cci_product, min_monthly_values):
 
     test_obj = HomogTest(cci_product, 'merra2',['wilkoxon', 'fligner_killeen'], 0.01, False,None)
     DF_Points = pd.DataFrame(index = gpis, data = {'lon': lons, 'lat': lats} )
-    for breaktime in breaktimes:
+    for breaktime in time_obj.get_times(ignore_conditions=True)['breaktimes']:
         DF_Points['before %s' % breaktime] = np.nan
         DF_Points['after %s' % breaktime] = np.nan
 
     for iteration, gpi in enumerate(gpis):
-        if iteration %10 == 0:
-            print 'processing gpi %i (%i of %i)' % (gpi, iteration, gpis.size)
+        times = time_obj.get_times(ignore_conditions=True, as_datetime=True)
+        starts = np.flipud(np.array([timeframe[0] for timeframe in times['timeframes']]))
+        ends = np.flipud(np.array([timeframe[1] for timeframe in times['timeframes']]))
+        breaktimes = np.flipud(times['breaktimes'])
+
+        #if iteration %10 == 0:
+        print 'processing gpi %i (%i of %i)' % (gpi, iteration, gpis.size)
         try:
             df_time = test_obj.read_gpi(gpi, starts[0], ends[-1])
 

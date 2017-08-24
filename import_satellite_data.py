@@ -20,7 +20,7 @@ from pygeogrids.netcdf import load_grid
 from otherfunctions import merge_ts, regress
 from read_adjusted_ts import cciAdjustedTs
 import re
-
+from rsroot import root_path
 
 def read_warp_ssm(ssm, ssf, gpi):
     import pytesmo.timedate.julian as julian
@@ -179,7 +179,7 @@ class QDEGdata_D(object):
 
         # Add Daily Products
         # TODO: before adding versions: Add cfg file and add data pathes in cfgfile
-        cci_versions = ['22', '31', '33', '40']
+        cci_versions = ['22', '31', '33', '42']
         cci_types = ['COMBINED', 'ACTIVE', 'PASSIVE']
 
         cci_res = [re.compile("cci_%s.+" % version) for version in cci_versions]
@@ -199,17 +199,20 @@ class QDEGdata_D(object):
                         print('Try files for daily cci_%s data on R' % version)
                     cci = ESA_CCI_SM('ESA_CCI_SM_v0%s.%s' % (version[0], version[1]),
                                      parameter=type,
-                                     cfg_path=r"H:\HomogeneityTesting_data\cci_cfg_local")
+                                     cfg_path=os.path.join(root_path.h,'HomogeneityTesting_data','cci_cfg_local'))
 
                     self.dayproducts[cci_product] = cci
 
         if 'merra2' in products:
-            self.lkup = pd.read_csv(r"H:\HomogeneityTesting_data\merra_gpi_LUT.csv", index_col=0)
+            lu_table_file = os.path.join(root_path.h, 'HomogeneityTesting_data', 'merra_gpi_LUT.csv')
+            self.lkup = pd.read_csv(lu_table_file, index_col=0)
             if os.path.isdir(r"D:\users\wpreimes\datasets\MERRA2_D\ts_daily_0030"):
                 print('Found local files for daily merra2')
                 path_merra2 = r'D:\users\wpreimes\datasets\MERRA2_D\ts_daily_0030'
             else:
-                path_merra2 = r"R:\Datapool_processed\Earth2Observe\MERRA2\M2T1NXLND.5.12.4\datasets\ts_daily_0030"
+                path_merra2 = os.path.join(root_path.r, 'Datapool_processed', 'Earth2Observe', 'MERRA2',
+                                           'M2T1NXLND.5.12.4', 'datasets', 'ts_daily_0030')
+
             self.dayproducts['merra2'] = MERRA2_Ts(path_merra2)
 
     def read_gpi(self, gpi, startdate, enddate):
@@ -424,10 +427,10 @@ if __name__ == '__main__':
     from grid_functions import cells_for_continent
     gpi = 367005
     timeframe = [datetime(1991,8,1), datetime(2002,7,1)]
-    data = QDEGdata_D(products=['merra2', 'cci_31_combined'])
+    data = QDEGdata_D(products=['merra2', 'cci_42_combined'])
     ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
     bias_corr_refdata, rxy, pval, ress = regress(
-        ts[['cci_31_combined', 'merra2']].rename(columns={'cci_31_combined': 'testdata', 'merra2': 'refdata'}))
+        ts[['cci_42_combined', 'merra2']].rename(columns={'cci_42_combined': 'testdata', 'merra2': 'refdata'}))
     ts['merra2_corr'] = bias_corr_refdata
     print ts
 
