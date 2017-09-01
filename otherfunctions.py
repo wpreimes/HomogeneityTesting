@@ -13,6 +13,87 @@ from netCDF4 import date2num
 from scipy import io
 import os
 from datetime import datetime
+import csv
+
+
+
+def cci_extract(_string):
+    cont = _string.upper().split('_')
+    if len(cont) == 3:
+        return {'prefix': cont[0], 'version': cont[1], 'type': cont[2], 'adjust': None}
+    elif len(cont) == 4 and cont[3] == 'ADJUSTED':
+        return {'prefix': cont[0], 'version': cont[1], 'type': cont[2], 'adjust': cont[3]}
+    else:
+        raise Exception('Unknown Product')
+
+def cci_string_combine(info):
+    if info['adjust']:
+        return  "_".join([info.get(key) for key in ['prefix', 'version', 'type','adjust']])
+    else:
+        return "_".join([info.get(key) for key in ['prefix', 'version', 'type']])
+
+def split(el, n):
+    '''
+    Split list of cells in n approx. equal parts for multiprocessing
+    :param el: list of elements to split
+    :param n: number of lists to split input up into
+    :return: list
+    '''
+    k, m = divmod(len(el), n)
+    return (el[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in xrange(n))
+
+
+def create_workfolder(path):
+    # type: (str) -> str
+    i = 1
+    while os.path.exists(os.path.join(path, 'v' + str(i))):
+        i += 1
+    else:
+        os.makedirs(os.path.join(path, 'v' + str(i)))
+
+    workfolder = os.path.join(path, 'v' + str(i))
+    print('Create workfolder: %s' % str(workfolder))
+
+    return workfolder
+
+
+def join_files(filefolder, filelist):
+    merged_file_name = 'saved_points.csv'
+    merged = []
+
+    for file in filelist:
+        filepath = os.path.join(filefolder, file)
+        data = csv_read_write(filepath, 'read')
+        for row in data:
+            merged.append(row)
+        os.remove(filepath)
+
+    merged_int = map(int, [item for sublist in merged for item in sublist])
+    path = csv_read_write(os.path.join(filefolder, 'saved_points.csv'), 'write', merged_int)
+
+    return path, np.asarray(merged_int)
+
+
+def csv_read_write(csv_path, mode, data=None):
+    if mode == 'write':
+        if not os.path.isfile(csv_path):
+            with open(csv_path, 'wb') as file:
+                wr = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+                wr.writerow(data)
+        else:
+            if os.path.isfile(csv_path):
+                with open(csv_path, 'ab') as file:
+                    wr = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+                    wr.writerow(data)
+        return csv_path
+    if mode == 'read':
+        return_data = []
+        with open(csv_path, 'r') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                return_data.append(row)
+        return return_data
+
 
 def regress(data):
     '''

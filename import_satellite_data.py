@@ -8,19 +8,18 @@ Created on Tue Dec 23 10:42:39 2016
 import numpy as np
 import pandas as pd
 from rsdata.ESA_CCI_SM.interface import ESA_CCI_SM
-from otherfunctions import regress
 from pytesmo.timedate.julian import caldat
 
 from gldas.interface import GLDASTs
 from merra.interface import MERRA2_Ts
-
+from pynetcf.time_series import GriddedNcIndexedRaggedTs
 import os
 from datetime import datetime
-from pygeogrids.netcdf import load_grid
-from otherfunctions import merge_ts, regress
+from otherfunctions import merge_ts, regress, cci_extract, cci_string_combine
 from read_adjusted_ts import cciAdjustedTs
 import re
 from rsroot import root_path
+
 
 def read_warp_ssm(ssm, ssf, gpi):
     import pytesmo.timedate.julian as julian
@@ -58,7 +57,7 @@ class QDEGdata_M(object):
         if 'merra2' in products:
             m_otherproduts.append('merra2')
 
-        cci_re = re.compile("cci_.+")
+        cci_re = re.compile("cci_.+", re.IGNORECASE)
         if any([cci_re.match(product) for product in products]):
             for cci_product in [cci_re.match(product) for product in products]:
                 if cci_product:
@@ -66,15 +65,6 @@ class QDEGdata_M(object):
                     m_otherproduts.append(cci_product)
         if m_otherproduts:
             self.m_otherdata = QDEGdata_D(products=m_otherproduts, only_sm=True)
-
-        # Monthly Data
-        if 'adjusted_cci' in products:
-            if os.path.isdir(r'D:\users\wpreimes\datasets\CCI_31_D\adjusted_temp'):
-                print('Found local files adjusted cci files')
-                path_adjustedcci = r'D:\users\wpreimes\datasets\CCI_31_D\adjusted_temp'
-            else:
-                raise Exception('Found no adjusted CCI files')
-            self.monthproducts['adjusted_cci'] = cciAdjustedTs(path_adjustedcci)
 
 
         if 'gldas-merged-from-file' in products:  # Monthly merged GLDAS Data for faster loading
@@ -124,27 +114,6 @@ class QDEGdata_M(object):
             else:
                 data_group = pd.concat([data_group, ts_gldas_merged], axis=1)
 
-        if 'adjusted_cci' in self.monthproducts.keys():
-            try:
-                ts_adjusted_cci = self.monthproducts['adjusted_cci'].read(gpi)['adjusted']
-                ts_adjusted_cci = ts_adjusted_cci.resample('M').mean()
-                ts_adjusted_cci = ts_adjusted_cci * 100
-            except:
-                ts_adjusted_cci = pd.Series(index=pd.date_range(start=startdate, end=enddate))
-                ts_adjusted_cci = ts_adjusted_cci.resample('M').mean()
-
-            if ts_adjusted_cci.isnull().all():
-                # raise Exception, 'No GLDAS Data available for GPI %i' %gpi
-                # print 'No adjusted cci data for gpi %0i' % gpi
-                pass
-            ts_adjusted_cci.index = ts_adjusted_cci.index.to_datetime().date
-            ts_adjusted_cci.index = ts_adjusted_cci.index.to_datetime()
-
-            if data_group.empty:
-                data_group['adjusted_cci'] = ts_adjusted_cci
-            else:
-                data_group = pd.concat([data_group, ts_adjusted_cci.rename('adjusted_cci')], axis=1)
-
         return data_group[startdate:enddate]
 
 
@@ -179,41 +148,50 @@ class QDEGdata_D(object):
 
         # Add Daily Products
         # TODO: before adding versions: Add cfg file and add data pathes in cfgfile
-        cci_versions = ['22', '31', '33', '42']
+        cci_versions = ['22', '31', '33', '41']
         cci_types = ['COMBINED', 'ACTIVE', 'PASSIVE']
 
-        cci_res = [re.compile("cci_%s.+" % version) for version in cci_versions]
+        cci_res = [re.compile("cci_%s.+" % version, re.IGNORECASE) for version in cci_versions]
         for cci_re in cci_res:
             for cci_product in [cci_re.match(product) for product in products]:
                 if cci_product:
                     cci_product = cci_product.group()
-                    prefix, version, type = cci_product.split('_')
-                    type = type.upper()
-
-                    if prefix != 'cci' or version not in cci_versions or type not in cci_types:
+                    info = cci_extract(cci_product)
+                    cci_product = cci_string_combine(info)
+                    if info['prefix'] != 'CCI' or info['version'] not in cci_versions or info['type'] not in cci_types:
                         raise Exception('cci version or product not known...use format cci_XX_PRODUCT')
 
-                    if os.path.isdir(r'D:\USERS\wpreimes\datasets\CCI_%s_D' % version):
-                        print('Found local files for daily cci_%s data' % version)
+                    if os.path.isdir(os.path.join(root_path.d, 'USERS', 'wpreimes', 'datasets', 'CCI_%s_D' % info['version'])):
+                        print('Found local files for %s daily cci_%s %s data' % (info['type'], info['version'],
+                                                                                 info['adjust'] if info['adjust'] else 'UNADJUSTED'))
                     else:
-                        print('Try files for daily cci_%s data on R' % version)
-                    cci = ESA_CCI_SM('ESA_CCI_SM_v0%s.%s' % (version[0], version[1]),
-                                     parameter=type,
-                                     cfg_path=os.path.join(root_path.h,'HomogeneityTesting_data','cci_cfg_local'))
+                        print ('Use CCI data from R')
 
+                    cfg_path = os.path.join(root_path.d, 'USERS', 'wpreimes', 'datasets', 'HomogeneityTesting_data',
+                                            'cci_cfg_local')
+                    if not os.path.isdir(cfg_path):
+                        cfg_path = os.path.join(root_path.h, 'HomogeneityTesting_data', 'cci_cfg_local')
+
+
+                    cci = ESA_CCI_SM('ESA_CCI_SM_v0%s.%s' % (info['version'][0], info['version'][1]),
+                                     parameter=info['type'],
+                                     cfg_path=cfg_path)
                     self.dayproducts[cci_product] = cci
 
         if 'merra2' in products:
-            lu_table_file = os.path.join(root_path.h, 'HomogeneityTesting_data', 'merra_gpi_LUT.csv')
+            lu_table_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'merra_gpi_LUT.csv')
             self.lkup = pd.read_csv(lu_table_file, index_col=0)
-            if os.path.isdir(r"D:\users\wpreimes\datasets\MERRA2_D\ts_daily_0030"):
+
+            path_merra2 = os.path.join(root_path.d, 'USERS', 'wpreimes', 'datasets', 'MERRA2_D', 'ts_daily_0030')
+            if os.path.isdir(path_merra2):
                 print('Found local files for daily merra2')
-                path_merra2 = r'D:\users\wpreimes\datasets\MERRA2_D\ts_daily_0030'
             else:
                 path_merra2 = os.path.join(root_path.r, 'Datapool_processed', 'Earth2Observe', 'MERRA2',
                                            'M2T1NXLND.5.12.4', 'datasets', 'ts_daily_0030')
+                print('Found files for daily merra2 on R')
 
             self.dayproducts['merra2'] = MERRA2_Ts(path_merra2)
+
 
     def read_gpi(self, gpi, startdate, enddate):
         """
@@ -251,30 +229,38 @@ class QDEGdata_D(object):
             data_group = df_hour
 
         # read cci data (all versions in product)
-        for name in [cci_name for cci_name in self.dayproducts.keys() if 'cci' in cci_name]:
+        for name in [cci_name for cci_name in self.dayproducts.keys() if 'CCI' in cci_name]:
             cci_product = self.dayproducts[name]
             try:
-                df_cci = pd.DataFrame(cci_product.read(gpi))
-                df_cci = df_cci.set_index('jd')
-                m, d, y = caldat(df_cci.index.values)
-                df_cci.index = pd.to_datetime(pd.DataFrame(data={'year': y, 'month': m, 'day': d}))
-                df_cci = df_cci[startdate:enddate]
-                df_cci = df_cci[df_cci['flag'] == 0]
-                df_cci['sm'].loc[df_cci['sm'] == -999999.] = np.nan
+                if isinstance(cci_product, GriddedNcIndexedRaggedTs):
+                    cci_product = cciAdjustedTs(cci_product.path,os.path.join(cci_product.path, 'ECV_CCI_gridv4.nc'))
+                    df_cci = pd.DataFrame(cci_product.read(gpi))
+                    if df_cci.columns.values[0]!=name:
+                        df_cci=df_cci.rename(columns={df_cci.columns.values[0]:name})
+                    df_cci = df_cci*100
+                else:
+                    df_cci = pd.DataFrame(cci_product.read(gpi))
+                    df_cci = df_cci.set_index('jd')
+                    m, d, y = caldat(df_cci.index.values)
+                    df_cci.index = pd.to_datetime(pd.DataFrame(data={'year': y, 'month': m, 'day': d}))
+                    df_cci = df_cci[startdate:enddate]
+                    df_cci = df_cci[df_cci['flag'] == 0]
+                    df_cci['sm'].loc[df_cci['sm'] == -999999.] = np.nan
+                    df_cci=df_cci.rename(columns={'sm': name})
             except:
-                df_cci['sm'] = pd.Series(index=pd.date_range(start=startdate, end=enddate))
+                df_cci[name] = pd.Series(index=pd.date_range(start=startdate, end=enddate))
 
-            if df_cci['sm'].isnull().all():
+            if df_cci[name].isnull().all():
                 # print 'No cci sm data for gpi %0i' % gpi
                 pass
             if data_group.empty:
                 if self.only_sm:
-                    data_group['%s' % name] = df_cci['sm']
+                    data_group['%s' % name] = df_cci[name]
                 else:
                     data_group[name + '_' + df_cci.columns.values] = df_cci
             else:
                 if self.only_sm:
-                    data_group = pd.concat([data_group, df_cci['sm'].rename('%s' % name)], axis=1)
+                    data_group = pd.concat([data_group, df_cci[name]], axis=1)
                 else:
                     data_group = pd.concat([data_group, df_cci], axis=1)
 
@@ -425,12 +411,12 @@ class QDEGdata_3H(object):
 
 if __name__ == '__main__':
     from grid_functions import cells_for_continent
-    gpi = 367005
-    timeframe = [datetime(1991,8,1), datetime(2002,7,1)]
-    data = QDEGdata_D(products=['merra2', 'cci_42_combined'])
+    gpi = 346840
+    timeframe = [datetime(1978,10,26), datetime(2016,12,31)]
+    data = QDEGdata_D(products=['merra2','CCI_31_COMBINED'])
     ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
     bias_corr_refdata, rxy, pval, ress = regress(
-        ts[['cci_42_combined', 'merra2']].rename(columns={'cci_42_combined': 'testdata', 'merra2': 'refdata'}))
+        ts[['CCI_31_COMBINED', 'merra2']].rename(columns={'CCI_31_COMBINED': 'testdata', 'merra2': 'refdata'}))
     ts['merra2_corr'] = bias_corr_refdata
     print ts
 

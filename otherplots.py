@@ -16,18 +16,16 @@ from cci_timeframes import CCITimes
 import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 from datetime import datetime
-from import_satellite_data import QDEGdata_D
 from longest_homogeneous_period import calc_longest_homogeneous_period
 from save_data import load_Log
-import pygeogrids.netcdf as nc
+from smecv_grid.grid import SMECV_Grid_v042
 import xarray as xr
 from interface import HomogTest
-from pygeogrids.netcdf import load_grid
 from otherfunctions import resample_to_monthly
 
 import platform
 
-def valid_months_plot(workdir, cci_product, min_monthly_values):
+def valid_months_plot(workdir, testproduct, refproduct, min_monthly_values):
 
     #NOT IN PROCESS
 
@@ -37,32 +35,32 @@ def valid_months_plot(workdir, cci_product, min_monthly_values):
     #Count values BEFORE breaktime
 
     #Count value AFTER breaktime
-    time_obj = CCITimes(cci_product)
+    time_obj = CCITimes(testproduct)
 
-    grid = load_grid(os.path.join(root_path.u,'datasets','grids','qdeg_land_grid.nc'))#type: CellGrid()
+    grid = SMECV_Grid_v042() # type: CellGrid()
 
 
-    #grid = grid.subgrid_from_cells([777]) #TODO: Delete
+    #grid = grid.subgrid_from_cells([564]) #TODO: Delete
 
     gpis = grid.get_grid_points()[0]
     lons = grid.get_grid_points()[1]
     lats = grid.get_grid_points()[2]
 
 
-    test_obj = HomogTest(cci_product, 'merra2',['wilkoxon', 'fligner_killeen'], 0.01, False,None)
+    test_obj = HomogTest(testproduct, refproduct,['wilkoxon', 'fligner_killeen'], 0.01, False,None)
     DF_Points = pd.DataFrame(index = gpis, data = {'lon': lons, 'lat': lats} )
     for breaktime in time_obj.get_times(ignore_conditions=True)['breaktimes']:
         DF_Points['before %s' % breaktime] = np.nan
         DF_Points['after %s' % breaktime] = np.nan
 
     for iteration, gpi in enumerate(gpis):
-        times = time_obj.get_times(ignore_conditions=True, as_datetime=True)
+        times = time_obj.get_times(ignore_conditions=True, as_datetime=False)
         starts = np.flipud(np.array([timeframe[0] for timeframe in times['timeframes']]))
         ends = np.flipud(np.array([timeframe[1] for timeframe in times['timeframes']]))
         breaktimes = np.flipud(times['breaktimes'])
 
-        #if iteration %10 == 0:
-        print 'processing gpi %i (%i of %i)' % (gpi, iteration, gpis.size)
+        if iteration %100 == 0:
+            print 'processing gpi %i (%i of %i)' % (gpi, iteration, gpis.size)
         try:
             df_time = test_obj.read_gpi(gpi, starts[0], ends[-1])
 
@@ -84,19 +82,7 @@ def valid_months_plot(workdir, cci_product, min_monthly_values):
                          .set_index(['lat', 'lon'])
 
     global_image = DF_Points.to_xarray()
-    global_image.to_netcdf(os.path.join(workdir, '%s_valid_monthly_obs.nc' % cci_product))
-
-
-
-
-
-
-
-
-
-
-
-
+    global_image.to_netcdf(os.path.join(workdir, '%s_valid_monthly_obs.nc' % testproduct))
 
 
 
@@ -107,8 +93,8 @@ def inhomo_plot_with_stats(workdir, filename):
     :return: None
     '''
     ncpath = os.path.join(workdir, filename)
-    landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
-    land_points = landgrid.get_grid_points()[0]
+    ccigrid = SMECV_Grid_v042() # type: CellGrid()
+    land_points = ccigrid.get_grid_points()[0]
 
     log = load_Log(workdir)
     products = log.get_products()
@@ -277,14 +263,14 @@ def compare_RTM_RTG(workdir, model_prod):
 '''
 
 
-def show_tested_gpis(workdir, filename):
+def show_processed_gpis(workdir,plottype, filename):
     '''
     Calculate spatial plots for the areas where Homogeneity Tests were (not)
     performed
     '''
     ncpath = os.path.join(workdir, filename)
-    landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
-    land_points = landgrid.get_grid_points()[0]
+    ccigrid = SMECV_Grid_v042() # type: CellGrid()
+    land_points = ccigrid.get_grid_points()[0]
 
     log = load_Log(workdir)
     products = log.get_products()
@@ -298,24 +284,36 @@ def show_tested_gpis(workdir, filename):
     for name in DF_Points_from_file.columns.values:
         DF_Points[name] = DF_Points_from_file[name]
 
-    status_var = ncfile.variables['test_status'].attrs['Values']
 
     splitname = filename.split('_')
-
     breaktime_str = splitname[1]
+
+
+    if plottype=='test':
+        statname = 'test_status'
+        title = 'HomogeneityTesting Coverage \n %s|%s|%s' % (test_prod, ref_prod, breaktime_str)
+        plotfile_name = 'RT_coverage_%s_%s' % (ref_prod, breaktime_str)
+    else:
+        statname = 'adj_status'
+        title = 'BreakAdjustment Coverage \n %s|%s|%s' % (test_prod, ref_prod, breaktime_str)
+        plotfile_name = 'adjustment_coverage_%s_%s' % (ref_prod, breaktime_str)
+
+    status_var = ncfile.variables[statname].attrs['Values']
+
+
 
 
     colors = ["#2ecc71", "#9b59b6", "#3498db", "#95a5a6", "#e74c3c",
               "#34495e", "#FFC200", "#FFC0CB", "#FF1493", "#FFFF00"]
 
     N = len(colors)
-    cmap = LinearSegmentedColormap.from_list('test_status',
+    cmap = LinearSegmentedColormap.from_list(statname,
                                              colors,
                                              N=N)
 
     img = np.empty(DF_Points.index.size, dtype='float32')
     img.fill(np.nan)
-    img[DF_Points.index] = DF_Points['test_status'].values
+    img[DF_Points.index] = DF_Points[statname].values
 
     # mask array where invalid values (nans) occur
     img_masked = np.ma.masked_invalid(img.reshape((180 * 4, 360 * 4)))
@@ -349,10 +347,9 @@ def show_tested_gpis(workdir, filename):
     for j in range(N):
         cb.ax.text((float(j)/float(N)) + float(1./float(N*2)), .5, str(j), fontsize=15, ha='center', va='center')
 
-    title = 'HomogeneityTesting Coverage \n %s|%s|%s' % (test_prod, ref_prod, breaktime_str)
     plt.title(title, fontsize=20)
 
-    stats = DF_Points['test_status'].dropna().values
+    stats = DF_Points[statname].dropna().values
     all_gpis = float(land_points.size)
 
     # Grab the groups and their values from the meta data of the nc file
@@ -372,7 +369,7 @@ def show_tested_gpis(workdir, filename):
     plt.annotate(textbox, fontsize=10, xy=(0.025, 0.05), xycoords='axes fraction',
                  bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
-    plotfile_name = 'RT_coverage_%s_%s' % (ref_prod, breaktime_str)
+
     plt.savefig(workdir + '\\' + plotfile_name + '.png', dpi=f.dpi)
 
     return meta
@@ -488,8 +485,8 @@ if __name__ == '__main__':
     # extreme_break(r'H:\HomogeneityTesting_data\output\CCI22EGU','gldas_v2','cci_22')
     #show_tested_gpis(r"H:\HomogeneityTesting_data\output\v5","HomogeneityTestResult_2007-01-01_image.nc")
     #longest_homog_period_plots(r"H:\HomogeneityTesting_data\output\v5")
-    #show_tested_gpis(r"H:\HomogeneityTesting_data\output\v2")
+    # show_processed_gpis(r"H:\HomogeneityTesting_data\output\CCI33", 'test',"HomogeneityTest_merra2_1991-08-01.nc" )
     #inhomo_plot_with_stats(r'H:\HomogeneityTesting_data\output\v5',"HomogeneityTestResult_2007-01-01_image.nc")
     # compare_RTM_RTG(r'H:\HomogeneityTesting_data\output\CCI31EGU','merra2')
     # show_tested_gpis(r"H:\HomogeneityTesting_data\output\v15","HomogeneityTest_merra2_2011-10-01")
-    #valid_months_plot(r'H:\HomogeneityTesting_data\output\CCI_available_data_plots', 'cci_31_combined', 10)
+    valid_months_plot(r'H:\HomogeneityTesting_data\output\CCI_available_data_plots', 'CCI_33_COMBINED','merra2', 10)

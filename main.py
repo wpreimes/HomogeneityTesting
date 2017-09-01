@@ -7,93 +7,30 @@ Created on Wed Mar 22 17:05:55 2017
 from typing import Union
 import os
 from datetime import datetime
-from pygeogrids.netcdf import load_grid
 from multiprocessing import Process, Queue
 from pynetcf.time_series import GriddedNcIndexedRaggedTs
-from otherfunctions import resample_to_monthly
-import pandas as pd
+from otherfunctions import resample_to_monthly, csv_read_write, join_files, split, create_workfolder
 from interface import HomogTest
 from cci_timeframes import CCITimes
 from save_data import Results2D, extract_adjust_infos, extract_test_infos, save_Log, GlobalResults
 from grid_functions import cells_for_continent
 from adjustment import adjustment, adjustment_params
-import numpy as np
-from otherplots import show_tested_gpis, inhomo_plot_with_stats, longest_homog_period_plots
-import csv
+from otherplots import show_processed_gpis, inhomo_plot_with_stats, longest_homog_period_plots
+from smecv_grid.grid import SMECV_Grid_v042
 
-def split(el, n):
-    '''
-    Split list of cells in n approx. equal parts for multiprocessing
-    :param el: list of elements to split
-    :param n: number of lists to split input up into
-    :return: list
-    '''
-    k, m = divmod(len(el), n)
-    return (el[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in xrange(n))
-
-
-def create_workfolder(path):
-    # type: (str) -> str
-    i = 1
-    while os.path.exists(os.path.join(path, 'v' + str(i))):
-        i += 1
-    else:
-        os.makedirs(os.path.join(path, 'v' + str(i)))
-
-    workfolder = os.path.join(path, 'v' + str(i))
-    print('Create workfolder: %s' % str(workfolder))
-
-    return workfolder
-
-
-def join_files(filefolder, filelist):
-    merged_file_name = 'saved_points.csv'
-    merged = []
-
-    for file in filelist:
-        filepath = os.path.join(filefolder, file)
-        data = csv_read_write(filepath, 'read')
-        for row in data:
-            merged.append(row)
-        os.remove(filepath)
-
-    merged_int = map(int, [item for sublist in merged for item in sublist])
-    path = csv_read_write(os.path.join(filefolder, 'saved_points.csv'), 'write', merged_int)
-
-    return path, np.asarray(merged_int)
-
-
-def csv_read_write(csv_path, mode, data=None):
-    if mode == 'write':
-        if not os.path.isfile(csv_path):
-            with open(csv_path, 'wb') as file:
-                wr = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
-                wr.writerow(data)
-        else:
-            if os.path.isfile(csv_path):
-                with open(csv_path, 'ab') as file:
-                    wr = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
-                    wr.writerow(data)
-        return csv_path
-    if mode == 'read':
-        return_data = []
-        with open(csv_path, 'r') as file:
-            reader = csv.reader(file)
-            for row in reader:
-                return_data.append(row)
-        return return_data
-
-
-def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_prod, anomaly, process_no,
+def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_prod, ref_prod, anomaly, process_no,
                       adjusted_ts_path=None):
 
     # Function for multicore processing
 
     print('Start process %i' % process_no)
     process_csv_file = 'saved_points_%s.csv' % process_no
-
+    ########################################## TODO: Values to change
+    backward_extended_timeframes = True
+    get_all_B = False # TODO: Try this
     min_monthly_values = 10 # If CCI data contains less values, the monthly value is resampled as nan
     min_data_size = 3 # Minimum number of monthly values before/after break to perform homogeneity testing # TODO: different value?
+    ##########################################
     tests = ['wilkoxon', 'fligner_killeen']
 
     test_obj = HomogTest(test_prod,
@@ -102,8 +39,6 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
                          0.01,  # TODO: Choose higher alpha value eg 0.05 or 0.1
                          anomaly,
                          adjusted_ts_path)
-
-    times_obj = CCITimes(test_prod)
 
     if adjusted_ts_path:
         dataset = GriddedNcIndexedRaggedTs(path=adjusted_ts_path, grid=(save_obj.pre_process_grid), mode='w')
@@ -115,13 +50,14 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
     for icell, cell in enumerate(cells):
 
         print 'Processing QDEG Cell %i (iteration %i of %i)' % (cell, icell + 1, len(cells))
-
         log_file.add_line('%s: Start Testing Cell %i' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), cell))
         grid_points = (save_obj.pre_process_grid).grid_points_for_cell(cell)[0]
 
         for iteration, gpi in enumerate(grid_points):
-            # if iteration%10 == 0:
-            print 'processing gpi %i (%i of %i)' % (gpi, iteration, grid_points.size)
+            #if gpi not in [369909, 365585, 375665, 320970, 322412]: continue
+
+            if iteration%10 == 0:
+                print 'processing gpi %i (%i of %i)' % (gpi, iteration, grid_points.size)
             '''
             if test_obj.ref_prod == 'ISMN-merge':
                 valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
@@ -135,11 +71,11 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
             except:
                 continue
 
-            # times = times_obj.times_for_gpi(gpi, as_datetime=True) # TODO: activate for location conditional Timeframes
-            times = times_obj.get_times(ignore_conditions=True, as_datetime=True)
+            times = times_obj.get_times(gpi, as_datetime=True)
             timeframes = times['timeframes']
             breaktimes = times['breaktimes']
 
+            homogeneous_breaktimes = []
             for i, (timeframe, breaktime) in enumerate(zip(timeframes, breaktimes)):
                 retries = 0
                 adjresult = False
@@ -148,7 +84,11 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
                 # the (insufficiently) corrected test data and repeat adjustment (< max_retries times)
                 while retries < max_retries and (not testresult or
                                                      not test_obj.check_testresult(testresult)[1]):
-                    # Cut data to timeframe
+
+                    if backward_extended_timeframes: # Cut data to timeframe
+                        while timeframe[1] in homogeneous_breaktimes:
+                            timeframe[1] = times_obj.get_adjacent(gpi, timeframe, -1)[1] #Use previous timeframe
+
                     data_daily = df_time[timeframe[0]:timeframe[1]] # keep this for adjustment #TODO: Allow Extended Timeframes?
                     try:  # Homogeneity Testing
                         data_daily = data_daily.dropna()
@@ -174,13 +114,14 @@ def process_for_cells(q, workfolder, save_obj, cells, log_file, test_prod, ref_p
 
                     break_found_by, check_result = test_obj.check_testresult(testresult)
                     if check_result == True: # no break was found
+                        homogeneous_breaktimes.append(breaktime)
                         if retries == 0:
                             #print '%s: Adjustment not necessary' % str(breaktime.date())
                             break  # No breaks found, escape loop
                         else:  # break was removed, escape loop
                             print '%s: Break removed after %i retries' % (str(breaktime.date()), retries)
                             break
-                    elif adjusted_ts_path:  # break was found, attempt adjustment
+                    elif get_all_B or adjusted_ts_path:  # break was found, attempt adjustment
                         '''
                         # Adjustment 
                         1) Perform adjustment on the dataframe
@@ -267,9 +208,9 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
     if skip_times and adjusted_ts_path:
         raise Warning('Ignoring Breaktimes with activated adjustment!')
 
-    breaktimes = CCITimes(test_prod).get_times(ignore_conditions=True)['breaktimes']
+    times_obj = CCITimes(test_prod,ignore_position=True, skip_times=skip_times) #TODO: activate for location conditional Timeframes
 
-    grid = load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
+    grid = SMECV_Grid_v042()
 
     workfolder = create_workfolder(path)
 
@@ -277,10 +218,10 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
 
     if cells == 'global':
         cells = grid.get_cells()
-    else:
+    elif isinstance(cells,str):
         cells = cells_for_continent(cells)
 
-    save_obj = Results2D(grid, workfolder, breaktimes,
+    save_obj = Results2D(grid, workfolder, times_obj.get_times(None, as_datetime=False)['breaktimes'],
                          cell_files_path=r"D:\users\wpreimes\datasets\temp_homogtest_cellfiles")
 
     processes = []
@@ -288,7 +229,7 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
     csv_files = []
     # Split cells in equally sized packs for multiprocessing
     for process_no, cell_pack in enumerate(list(split(cells, parallel_processes))):
-        p = Process(target=process_for_cells, args=(q, workfolder, save_obj, cell_pack,
+        p = Process(target=process_for_cells, args=(q, workfolder, save_obj, times_obj, cell_pack,
                                                     log_file, test_prod, ref_prod, anomaly, process_no,
                                                     adjusted_ts_path))
         processes.append(p)
@@ -303,24 +244,27 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
     _, saved_gpis = join_files(workfolder, csv_files)
     print('Finished Testing (and Adjustment)')
     log_file.add_line('=====================================')
-    gridfile = save_obj.save_subgrid(saved_gpis)  # Save test gpis subset to gridfile
-    log_file.add_line('Saved Grid of Tested Points: %s' % gridfile)
+    post_process_grid = save_obj.save_subgrid(saved_gpis)  # Save test gpis subset to gridfile
 
     # Global files and images from testing
-    save_obj = GlobalResults(save_obj)
-    global_file_name = save_obj.save_global_file(keep_cell_files=True)  # Merge test result cell files to global file
+    save_obj_glob = GlobalResults(save_obj, post_process_grid)
+    global_file_name = save_obj_glob.save_global_file(keep_cell_files=False)  # Merge test result cell files to global file
     log_file.add_line('Merged files to global file: %s' % global_file_name)
-    image_files_names = save_obj.create_image_files()  # Create 2D image files from test results
+    image_files_names = save_obj_glob.create_image_files()  # Create 2D image files from test results
     log_file.add_line('Create global image files:')
     for i, image_file in enumerate(image_files_names, start=1):  # Create spatial plots from test results and coverage
         log_file.add_line('  NC Image File %i : %s' % (i, image_file))
-        meta = show_tested_gpis(workfolder, image_file)
+        meta = show_processed_gpis(workfolder, 'test', image_file)
         log_file.add_line('  Test Results Plot %i : %s' % (i, str(meta)))
         stats = inhomo_plot_with_stats(workfolder, image_file)
-        log_file.add_line('  Coverage Plot %i : %s' % (i, str(stats)))
+        log_file.add_line('  Test Results Plot %i : %s' % (i, str(meta)))
     fn_long_per_plot = longest_homog_period_plots(workfolder)  # Create plot of longest homogeneous period
     log_file.add_line('  Plot of Longest Homogeneous Period : %s' % fn_long_per_plot)
 
+    if adjusted_ts_path:
+        for i, image_file in enumerate(image_files_names, start=1):
+            log_file.add_line('  Adjusment coverage Plot %i : %s' % (i, str(stats)))
+            meta = show_processed_gpis(workfolder, 'adjustment', image_file)
     '''
     log_file.add_line('=====================================')
     if adjusted_ts_path:
@@ -333,11 +277,11 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
 if __name__ == '__main__':
     # Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
     # Testproduct of form cci_*version*_*product*
-    start('cci_33_combined',
+    start('CCI_33_COMBINED',
           'merra2',
-          r'H:\HomogeneityTesting_data\output',
-          cells=['Australia', 'NorthAmerica'],
+          r'D:\HomogeneityTesting_data\output',
+          cells=[777],
           skip_times=None,
           anomaly=False,
           adjusted_ts_path=r"D:\users\wpreimes\datasets\CCI_33_D\042_combined_MergedProd\adjusted",
-          parallel_processes=6)
+          parallel_processes=1)

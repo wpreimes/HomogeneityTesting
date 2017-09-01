@@ -12,6 +12,8 @@ import xarray as xr
 from pynetcf.point_data import GriddedPointData
 import os
 import re
+import shutil
+from smecv_grid.grid import SMECV_Grid_v042
 
 
 class save_Log(object):
@@ -58,27 +60,28 @@ class Results2D(object):
             cell_files_path = os.path.join(self.path, 'gridded_files')
             if not os.path.isdir(cell_files_path):
                 os.mkdir(cell_files_path)
-        self.cell_files_path = self._init_empty_temp_files(cell_files_path)
+        self.cell_files_path = cell_files_path
         self.breaktimes = breaktimes
         self.pre_process_grid = grid  # type: grids.CellGrid
         self.global_gpis = []
         self.data = {breaktime: {'gpi': []} for breaktime in self.breaktimes}
 
-    def _init_empty_temp_files(self, files_path):
-        files = os.listdir(files_path)
+    def empty_temp_files(self):
+        files = os.listdir(self.cell_files_path)
         for file in files:
-            os.remove(os.path.join(files_path, file))
-        return files_path
+            os.remove(os.path.join(self.cell_files_path, file))
+
+        return self.cell_files_path
 
     def save_subgrid(self, gpis):
         filename = 'breaktest_grid.nc'
         subgrid = self.pre_process_grid.subgrid_from_gpis(gpis)
 
-        nc.save_grid(os.path.join(self.cell_files_path, filename),
+        nc.save_grid(os.path.join(self.path, filename),
                      grid=subgrid, subset_name='breaktest_flag',
                      subset_meaning='Tested Points')
 
-        return filename
+        return subgrid
 
     def reset_data(self):
         self.data = {breaktime: {'gpi': []} for breaktime in self.breaktimes}
@@ -179,7 +182,7 @@ def extract_adjust_infos(data_dict):
 
 class GlobalResults(Results2D):
 
-    def __init__(self, baseObject):
+    def __init__(self, baseObject, post_process_grid):
         self.__class__ = type(baseObject.__class__.__name__,
                               (self.__class__, baseObject.__class__),
                               {})
@@ -189,10 +192,9 @@ class GlobalResults(Results2D):
         self.breaktimes = baseObject.breaktimes
         self.fn_global = 'homogtest_global.nc'
         self.fn_images_base = 'HomogeneityTestResult_%s_image.nc'
-        self.gpis = nc.load_grid(os.path.join(self.cell_files_path,'breaktest_grid.nc')).get_grid_points()[0]
 
-        landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
-        self.post_process_grid = landgrid.subgrid_from_gpis(self.gpis)
+        self.post_process_grid = post_process_grid
+
 
     def save_global_file(self, keep_cell_files=False):
 
@@ -202,11 +204,7 @@ class GlobalResults(Results2D):
             nc.to_point_data(os.path.join(self.path, self.fn_global))
 
         if not keep_cell_files:
-            for cell in np.unique(self.post_process_grid.get_grid_points()[3]):
-                filename = str(cell)
-                while len(filename) < 4:
-                    filename = str(0) + filename
-                os.remove(os.path.join(self.cell_files_path, filename+'.nc'))
+            self.empty_temp_files()
         return self.fn_global
 
     def create_image_files(self):
@@ -258,9 +256,10 @@ class GlobalResults(Results2D):
             filenames.append(filename)
         return filenames
 
+
 if __name__ == '__main__':
     gpis = range(392888,392901)+range(391448,391461)
-    grid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
+    grid = SMECV_Grid_v042()
     save_obj = Results2D(grid, r'C:\Temp', ['2000-01-01'])
     for gpi in gpis:
         save_obj.add_data(gpi, '2000-01-01', {'testresult':{'status_test':'1'},

@@ -144,7 +144,7 @@ def adjustment_params(data, breaktime):
 
 
     i1 = dataframe[:breaktime]
-    i2 = dataframe[breaktime:]
+    i2 = dataframe[breaktime+pd.DateOffset(1):]
 
     # TODO: What happens if timeframe before / after breaktime is not equally long
 
@@ -167,8 +167,7 @@ def adjustment_params(data, breaktime):
         rval.append(r)
         pval.append(p)
 
-    B = np.squeeze(np.asarray(B))
-
+    B = np.squeeze(np.asarray(B)) # B= regression coefficients between Refdata and Testdat
     regtest = {'R': rval, 'p': pval}
 
     #TODO: activate tests

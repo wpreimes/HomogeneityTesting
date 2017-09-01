@@ -10,10 +10,9 @@ import numpy as np
 import pandas as pd
 
 import os
-from pygeogrids.netcdf import load_grid
 import pytesmo.io.ismn.interface as ismn
 import pickle
-from otherfunctions import merge_ts, regress
+from otherfunctions import merge_ts, regress, load_landgrid
 
 
 class ISMNdataUSA(object):
@@ -37,7 +36,7 @@ class ISMNdataUSA(object):
             breaktime.strftime('%Y-%m-%d'),
             timeframe[1].strftime('%Y-%m-%d'))
 
-        land_grid = load_grid(r"R:\Datapool_processed\GLDAS\GLDAS_NOAH025SUBP_3H\ancillary\GLDAS_025_grid.nc")
+        land_grid = load_landgrid()
 
         if os.path.isfile(defaultfile):
             with open(defaultfile, 'rb') as f:

@@ -13,11 +13,11 @@ from datetime import datetime, timedelta
 import pygeogrids.netcdf as nc
 import xarray as xr
 from save_data import load_Log
-import re
 from datetime import datetime
 from otherfunctions import dt_to_dec
 from cci_timeframes import CCITimes
 from typing import Union
+from smecv_grid.grid import SMECV_Grid_v042
 
 def calc_longest_homogeneous_period(workdir, file_pattern='HomogeneityTestResult_*.nc'):
     # type: (str) -> Union(pd.DataFrame,str)
@@ -31,12 +31,12 @@ def calc_longest_homogeneous_period(workdir, file_pattern='HomogeneityTestResult
     fileslist = glob.glob(os.path.join(workdir, file_pattern))
     filenames = [afile.replace(workdir + '\\', '') for afile in fileslist]
 
-    landgrid = nc.load_grid(r"D:\users\wpreimes\datasets\grids\qdeg_land_grid.nc")
+    ccigrid = SMECV_Grid_v042()
     log = load_Log(workdir)
     products = log.get_products()
     ref_prod = products['ref_prod']
     test_prod = products['test_prod']
-    mergetimes = CCITimes(test_prod).get_times(ignore_conditions=True)
+    mergetimes = CCITimes(test_prod, ignore_position=True).get_times()
     breaktimes = mergetimes['breaktimes']
 
     dates = [datetime.strptime(ts, "%Y-%m-%d") for ts in breaktimes]
@@ -56,13 +56,13 @@ def calc_longest_homogeneous_period(workdir, file_pattern='HomogeneityTestResult
                 DF_Points_from_file = DF_Points_from_file.loc[DF_Points_from_file.index.dropna()]
                 for name in DF_Points_from_file.columns.values:
                     test_results[name] = DF_Points_from_file[name]
-                test_results = test_results.loc[landgrid.get_grid_points()[0]]
+                test_results = test_results.loc[ccigrid.get_grid_points()[0]]
 
                 DF_Period = pd.concat([DF_Period, test_results[['test_results']]],axis=1)
                 DF_Period = DF_Period.rename(columns={'test_results':  datetime.strptime(breaktime, '%Y-%m-%d')})
 
-    DF_Period['lat'] = landgrid.get_grid_points()[2]
-    DF_Period['lon'] = landgrid.get_grid_points()[1]
+    DF_Period['lat'] = ccigrid.get_grid_points()[2]
+    DF_Period['lon'] = ccigrid.get_grid_points()[1]
     starttimes = [datetime.strptime(time, '%Y-%m-%d') for time in starttimes]
     breaktimes = [datetime.strptime(time, '%Y-%m-%d') for time in breaktimes]
     endtimes = [datetime.strptime(time, '%Y-%m-%d') for time in endtimes]

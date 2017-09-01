@@ -16,7 +16,7 @@ from datetime import datetime
 from cci_timeframes import CCITimes
 from otherfunctions import regress, datetime2matlabdn
 from import_satellite_data import QDEGdata_M, QDEGdata_D
-from import_ismn_data import ISMNdataUSA
+
 
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
@@ -35,7 +35,7 @@ class HomogTest(object):
         '''
         self.ref_prod = ref_prod
         self.test_prod = test_prod
-        self.range = CCITimes(test_prod).ranges
+        self.range = CCITimes(test_prod, ignore_position=True).get_times(None, as_datetime=False)['ranges']
         self.tests = tests
         '''
         if self.ref_prod == 'ISMN-merge':
