@@ -18,15 +18,15 @@ from adjustment import adjustment, adjustment_params
 from otherplots import show_processed_gpis, inhomo_plot_with_stats, longest_homog_period_plots
 from smecv_grid.grid import SMECV_Grid_v042
 
-def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_prod, ref_prod, anomaly, process_no,
-                      adjusted_ts_path=None):
+def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_prod, ref_prod, anomaly, backward_extended_timeframes,
+                      process_no, perform_adjustment=True):
 
     # Function for multicore processing
 
     print('Start process %i' % process_no)
     process_csv_file = 'saved_points_%s.csv' % process_no
     ########################################## TODO: Values to change
-    backward_extended_timeframes = True
+    adjusted_data_path = os.path.join(workfolder,test_prod+'_adjusted')
     get_all_B = False # TODO: Try this
     min_monthly_values = 10 # If CCI data contains less values, the monthly value is resampled as nan
     min_data_size = 3 # Minimum number of monthly values before/after break to perform homogeneity testing # TODO: different value?
@@ -38,10 +38,10 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                          tests,
                          0.01,  # TODO: Choose higher alpha value eg 0.05 or 0.1
                          anomaly,
-                         adjusted_ts_path)
+                         perform_adjustment)
 
-    if adjusted_ts_path:
-        dataset = GriddedNcIndexedRaggedTs(path=adjusted_ts_path, grid=(save_obj.pre_process_grid), mode='w')
+    if perform_adjustment:
+        dataset = GriddedNcIndexedRaggedTs(path=adjusted_data_path, grid=(save_obj.pre_process_grid), mode='w')
         max_retries = 5
     else:
         max_retries = 1
@@ -121,7 +121,7 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         else:  # break was removed, escape loop
                             print '%s: Break removed after %i retries' % (str(breaktime.date()), retries)
                             break
-                    elif get_all_B or adjusted_ts_path:  # break was found, attempt adjustment
+                    elif get_all_B or perform_adjustment:  # break was found, attempt adjustment
                         '''
                         # Adjustment 
                         1) Perform adjustment on the dataframe
@@ -191,9 +191,9 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
     q.put(process_csv_file)
 
 
-def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=None, adjusted_ts_path=None,
-          parallel_processes=8):
-    # type: (str, str, str, Union[list,str], Union[list,None], str, Union[str,None], int) -> None
+def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=None, perform_adjustment=None,
+          backward_extended_timeframes=True, parallel_processes=8):
+    # type: (str, str, str, Union[list,str], Union[list,None], str, Union[str,None], bool, int) -> None
     '''
 
     :param test_prod: cci_version_product
@@ -202,10 +202,12 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
     :param cells: global, Australia, North_America or [cellslist]
     :param skip_times: [int] eg. [0,1,2] to skip certain breaktimes
     :param anomaly: None or 'ccirange' or 'timeframe'
-    :param adjusted_ts_path: path to where adjusted data is saved
+    :param perform_adjustment: path to where adjusted data is saved
+    :param backward_extended_timeframes: expand timeframe over tested breaktimes, if no break was found
+    :param parallel_processes: number of parallel processes
     :return:
     '''
-    if skip_times and adjusted_ts_path:
+    if skip_times and perform_adjustment:
         raise Warning('Ignoring Breaktimes with activated adjustment!')
 
     times_obj = CCITimes(test_prod,ignore_position=True, skip_times=skip_times) #TODO: activate for location conditional Timeframes
@@ -222,7 +224,7 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
         cells = cells_for_continent(cells)
 
     save_obj = Results2D(grid, workfolder, times_obj.get_times(None, as_datetime=False)['breaktimes'],
-                         cell_files_path=r"D:\users\wpreimes\datasets\temp_homogtest_cellfiles")
+                         cell_files_path=os.path.join(workfolder,'temp_homogtest_cellfiles' ))
 
     processes = []
     q = Queue()
@@ -230,8 +232,8 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
     # Split cells in equally sized packs for multiprocessing
     for process_no, cell_pack in enumerate(list(split(cells, parallel_processes))):
         p = Process(target=process_for_cells, args=(q, workfolder, save_obj, times_obj, cell_pack,
-                                                    log_file, test_prod, ref_prod, anomaly, process_no,
-                                                    adjusted_ts_path))
+                                                    log_file, test_prod, ref_prod, anomaly, backward_extended_timeframes,
+                                                    process_no, perform_adjustment))
         processes.append(p)
         p.start()
 
@@ -248,7 +250,7 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
 
     # Global files and images from testing
     save_obj_glob = GlobalResults(save_obj, post_process_grid)
-    global_file_name = save_obj_glob.save_global_file(keep_cell_files=False)  # Merge test result cell files to global file
+    global_file_name = save_obj_glob.save_global_file(keep_cell_files=True)  # Merge test result cell files to global file
     log_file.add_line('Merged files to global file: %s' % global_file_name)
     image_files_names = save_obj_glob.create_image_files()  # Create 2D image files from test results
     log_file.add_line('Create global image files:')
@@ -261,13 +263,13 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
     fn_long_per_plot = longest_homog_period_plots(workfolder)  # Create plot of longest homogeneous period
     log_file.add_line('  Plot of Longest Homogeneous Period : %s' % fn_long_per_plot)
 
-    if adjusted_ts_path:
+    if perform_adjustment:
         for i, image_file in enumerate(image_files_names, start=1):
             log_file.add_line('  Adjusment coverage Plot %i : %s' % (i, str(stats)))
             meta = show_processed_gpis(workfolder, 'adjustment', image_file)
     '''
     log_file.add_line('=====================================')
-    if adjusted_ts_path:
+    if perform_adjustment:
         log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         pass
         #Do TS adjutement and save resutls to path
@@ -277,11 +279,12 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
 if __name__ == '__main__':
     # Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
     # Testproduct of form cci_*version*_*product*
-    start('CCI_33_COMBINED',
+    start('CCI_41_COMBINED',
           'merra2',
-          r'D:\HomogeneityTesting_data\output',
-          cells=[777],
+          r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output',
+          cells=[777,742],
           skip_times=None,
           anomaly=False,
-          adjusted_ts_path=r"D:\users\wpreimes\datasets\CCI_33_D\042_combined_MergedProd\adjusted",
-          parallel_processes=1)
+          backward_extended_timeframes = True,
+          perform_adjustment=True,
+          parallel_processes=2)

@@ -56,10 +56,8 @@ class Results2D(object):
             raise Exception("Breaktimes must be passed as list of strings")
 
         self.path = path
-        if not cell_files_path:
-            cell_files_path = os.path.join(self.path, 'gridded_files')
-            if not os.path.isdir(cell_files_path):
-                os.mkdir(cell_files_path)
+        if not os.path.isdir(cell_files_path):
+            os.mkdir(cell_files_path)
         self.cell_files_path = cell_files_path
         self.breaktimes = breaktimes
         self.pre_process_grid = grid  # type: grids.CellGrid

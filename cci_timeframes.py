@@ -60,9 +60,9 @@ class CCITimes(object):
                        ['1978-10-26', '1998-01-01']]
                   }]),
         }
-        timeframes['CCI_42_COMBINED'] = timeframes['CCI_33_COMBINED']
-        timeframes['CCI_42_PASSIVE'] = timeframes['CCI_33_PASSIVE']
-        timeframes['CCI_42_ACTIVE'] = timeframes['CCI_33_ACTIVE']
+        timeframes['CCI_41_COMBINED'] = timeframes['CCI_33_COMBINED']
+        timeframes['CCI_41_PASSIVE'] = timeframes['CCI_33_PASSIVE']
+        timeframes['CCI_41_ACTIVE'] = timeframes['CCI_33_ACTIVE']
 
         breaktimes = {'CCI_22_COMBINED': np.array(
             ['2012-07-01', '2011-10-01', '2007-01-01', '2002-07-01', '1998-01-01',
@@ -85,9 +85,9 @@ class CCITimes(object):
                  {'lat >= -37 and lat <= 37': ['1998-01-01']},
                  '1987-07-09'])
         }
-        breaktimes['CCI_42_COMBINED'] = breaktimes['CCI_33_COMBINED']
-        breaktimes['CCI_42_PASSIVE'] = breaktimes['CCI_33_PASSIVE']
-        breaktimes['CCI_42_ACTIVE'] = breaktimes['CCI_33_ACTIVE']
+        breaktimes['CCI_41_COMBINED'] = breaktimes['CCI_33_COMBINED']
+        breaktimes['CCI_41_PASSIVE'] = breaktimes['CCI_33_PASSIVE']
+        breaktimes['CCI_41_ACTIVE'] = breaktimes['CCI_33_ACTIVE']
 
         ranges = {'CCI_22_COMBINED': np.array(['1980-01-01', '2014-12-31']),
                   'CCI_31_COMBINED': np.array(['1980-01-01', '2015-12-31']),
@@ -95,7 +95,7 @@ class CCITimes(object):
                   'CCI_31_ACTIVE': np.array(['1991-08-01', '2015-12-31']),
                   'CCI_32_COMBINED': np.array(['1980-01-01', '2015-12-31']),
                   'CCI_33_COMBINED': np.array(['1978-10-26', '2016-12-31']),
-                  'CCI_42_COMBINED': np.array(['1978-10-26', '2016-12-31'])}
+                  'CCI_41_COMBINED': np.array(['1978-10-26', '2016-12-31'])}
 
         if product not in timeframes.keys() or product not in breaktimes.keys() or product not in ranges.keys():
             self.product = self._init_timeframes_for_adjusted(product)

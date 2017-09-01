@@ -134,7 +134,7 @@ def resample_to_monthly(df, threshold=10):
     '''
     concat = []
     for column in df.columns.values:
-        resampled = df[[column]].groupby(pd.TimeGrouper("M")).filter(lambda g: g.count() > 10).resample('M').mean()
+        resampled = df[[column]].groupby(pd.TimeGrouper("M")).filter(lambda g: g.count() > threshold).resample('M').mean()
         concat.append(resampled)
 
     return pd.concat(concat, axis = 1)
