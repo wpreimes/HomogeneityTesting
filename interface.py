@@ -298,5 +298,4 @@ class HomogTest(object):
         if type(wilkoxon['h']) is str and type(fligner_killeen['h']) is str:
             raise Exception('6: WK test and FK test failed')
 
-        self.testresults[test for test in tests]
         return data, {'wilkoxon': wilkoxon, 'fligner_killeen': fligner_killeen}
