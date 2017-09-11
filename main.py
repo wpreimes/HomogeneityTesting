@@ -5,11 +5,13 @@ Created on Wed Mar 22 17:05:55 2017
 @author: wpreimes
 """
 from typing import Union
+import numpy as np
+import matplotlib.pyplot as plt
 import os
 from datetime import datetime
 from multiprocessing import Process, Queue
 from pynetcf.time_series import GriddedNcIndexedRaggedTs
-from otherfunctions import resample_to_monthly, csv_read_write, join_files, split, create_workfolder
+from otherfunctions import temp_resample, csv_read_write, join_files, split, create_workfolder
 from interface import HomogTest
 from cci_timeframes import CCITimes
 from save_data import Results2D, extract_adjust_infos, extract_test_infos, save_Log, GlobalResults
@@ -17,19 +19,22 @@ from grid_functions import cells_for_continent
 from adjustment import adjustment, adjustment_params
 from otherplots import show_processed_gpis, inhomo_plot_with_stats, longest_homog_period_plots
 from smecv_grid.grid import SMECV_Grid_v042
+import warnings
 
-def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_prod, ref_prod, anomaly, backward_extended_timeframes,
+
+def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_prod, ref_prod, anomaly,
+                      backward_extended_timeframes,
                       process_no, perform_adjustment=True):
-
     # Function for multicore processing
 
     print('Start process %i' % process_no)
     process_csv_file = 'saved_points_%s.csv' % process_no
     ########################################## TODO: Values to change
-    adjusted_data_path = os.path.join(workfolder,test_prod+'_adjusted')
-    get_all_B = False # TODO: Try this
-    min_monthly_values = 10 # If CCI data contains less values, the monthly value is resampled as nan
-    min_data_size = 3 # Minimum number of monthly values before/after break to perform homogeneity testing # TODO: different value?
+    adjusted_data_path = os.path.join(workfolder, test_prod + '_adjusted')
+    min_data_for_temp_resampling = 0.33  # If CCI data contains less values, the monthly value is resampled as nan
+    min_data_size = 3  # Minimum number of monthly values before/after break to perform homogeneity testing # TODO: different value?
+    resample_method = 'M'
+    refdata_correction_for = 'iteration'  # iteration, full or timeframe
     ##########################################
     tests = ['wilkoxon', 'fligner_killeen']
 
@@ -54,10 +59,10 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
         grid_points = (save_obj.pre_process_grid).grid_points_for_cell(cell)[0]
 
         for iteration, gpi in enumerate(grid_points):
-            #if gpi not in [369909, 365585, 375665, 320970, 322412]: continue
+            #if gpi!=358365: continue
 
-            if iteration%10 == 0:
-                print 'processing gpi %i (%i of %i)' % (gpi, iteration, grid_points.size)
+            # if iteration%10 == 0:
+            print 'processing gpi %i (%i of %i)' % (gpi, iteration, grid_points.size)
             '''
             if test_obj.ref_prod == 'ISMN-merge':
                 valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
@@ -76,32 +81,43 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
             breaktimes = times['breaktimes']
 
             homogeneous_breaktimes = []
+
+            B_compare = {'before': {'k1': np.nan, 'd1': np.nan,
+                                    'k2': np.nan, 'd2': np.nan},
+                         'after': {'k1': np.nan, 'd1': np.nan,
+                                   'k2': np.nan, 'd2': np.nan}}
+
             for i, (timeframe, breaktime) in enumerate(zip(timeframes, breaktimes)):
                 retries = 0
                 adjresult = False
                 testresult = False
+
                 # In case that after adjustment a break is still found, re-correct the reference data to
                 # the (insufficiently) corrected test data and repeat adjustment (< max_retries times)
+                original_values = df_time[timeframe[0]:timeframe[1]]
                 while retries < max_retries and (not testresult or
                                                      not test_obj.check_testresult(testresult)[1]):
 
-                    if backward_extended_timeframes: # Cut data to timeframe
+                    if backward_extended_timeframes:  # Cut data to timeframe
                         while timeframe[1] in homogeneous_breaktimes:
-                            timeframe[1] = times_obj.get_adjacent(gpi, timeframe, -1)[1] #Use previous timeframe
+                            timeframe[1] = times_obj.get_adjacent(gpi, timeframe, -1)[1]  # Use end of previous timeframe
 
-                    data_daily = df_time[timeframe[0]:timeframe[1]] # keep this for adjustment #TODO: Allow Extended Timeframes?
+                    data_daily = df_time[timeframe[0]:timeframe[1]] # change with adjustment iterations
+                        # keep this for adjustment #TODO: Allow Extended Timeframes?
                     try:  # Homogeneity Testing
-                        data_daily = data_daily.dropna()
-                        # Correct bias in reference data
-                        data_daily['refdata'] = test_obj.ref_data_correction(data_daily[['testdata', 'refdata']])
+                        data_daily = data_daily.dropna()  # TODO: activate?
                         # resample to monthly value
-                        data = resample_to_monthly(data_daily, min_monthly_values).dropna()
+                        data = temp_resample(data_daily, resample_method, min_data_for_temp_resampling).dropna()
+                        # Correct bias in reference data
+                        if refdata_correction_for == 'iteration' or (refdata_correction_for == 'timeframe' and retries == 0):
+                            data_daily['refdata'] = test_obj.ref_data_correction(data_daily[['testdata', 'refdata']])
+                            data['refdata'] = test_obj.ref_data_correction(data[['testdata', 'refdata']])
                         # Checks if there is data left and calculates spearman correlation
                         corr, pval = test_obj.check_corr(data)
-                        data, _, _= test_obj.group_by_breaktime(data,
-                                                                breaktime,
-                                                                min_data_size=min_data_size,
-                                                                ignore_exception=False)
+                        data, _, _ = test_obj.group_by_breaktime(data,
+                                                                 breaktime,
+                                                                 min_data_size=min_data_size,
+                                                                 ignore_exception=False)
 
                         # Calculate difference TimeSeries
                         data['Q'] = data['testdata'] - data['refdata']
@@ -113,15 +129,33 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         break
 
                     break_found_by, check_result = test_obj.check_testresult(testresult)
-                    if check_result == True: # no break was found
+
+                    try:
+                        B, corr = adjustment_params(data=data,  # todo: or monthly??
+                                                    breaktime=breaktime)
+
+                    except Exception as e:
+                        adjresult = {'adj_status': str(e)}
+                        print '%i: Adjustment failed due to exception: %s' % (gpi, e)
+                        break
+
+                    if retries == 0:
+                        B_compare['before'] = {'k1': B['b1'][0], 'd1': B['b1'][1],
+                                               'k2': B['b2'][0], 'd2': B['b2'][1]}
+                    else:
+                        B_compare['after'] = {'k1': B['b1'][0], 'd1': B['b1'][1],
+                                              'k2': B['b2'][0], 'd2': B['b2'][1]}
+
+                    if check_result == True:  # no break was found
                         homogeneous_breaktimes.append(breaktime)
+
                         if retries == 0:
-                            #print '%s: Adjustment not necessary' % str(breaktime.date())
+                            # print '%s: Adjustment not necessary' % str(breaktime.date())
                             break  # No breaks found, escape loop
                         else:  # break was removed, escape loop
                             print '%s: Break removed after %i retries' % (str(breaktime.date()), retries)
                             break
-                    elif get_all_B or perform_adjustment:  # break was found, attempt adjustment
+                    elif perform_adjustment:  # break was found, attempt adjustment
                         '''
                         # Adjustment 
                         1) Perform adjustment on the dataframe
@@ -134,26 +168,16 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         5) Iterate over all gpis
                         '''
                         try:  # Time Series Adjustment
-                            B, corr = adjustment_params(data=data,   #todo: or monthly??
-                                                        breaktime=breaktime)
-
-                            #TODO: point dependent adjustment parameter?
-                            '''
-                            if break_found_by == ['wilkoxon']:
-                                adjust_param = 'add'
-                            elif break_found_by == ['fligner_killeen']:
-                                adjust_param = 'mult'
+                            # TODO: point dependent adjustment parameter?
+                            if retries == 0 and testresult['wilkoxon']['h'] == 1 and testresult['fligner_killeen']['h'] == 0:
+                                adjust_param = 'd'
                             else:
                                 adjust_param = 'both'
-                            '''
                             adjusted, adjresult = adjustment(data_daily=data_daily,
                                                              B=B,
                                                              breaktime=breaktime,
-                                                             adjust_param='both',
-                                                             adjust_part='first',
-                                                             return_part='all' if i == 0 else 'first',
-                                                             check_adjustment=True)
-
+                                                             adjust_param=adjust_param,
+                                                             adjust_part='first')
 
                             adjresult.update({'adj_status': '0: Adjustment performed'})
                             df_time.loc[adjusted.index, 'testdata'] = adjusted
@@ -168,11 +192,17 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         break
 
                 # Merge test results and adjustresults for gpi and add to save object
-                if testresult['test_status'][0] == '0' and not test_obj.check_testresult(testresult)[1]: #todo: ugly
+                if testresult['test_status'][0] == '0' and not test_obj.check_testresult(testresult)[1]:  # todo: ugly
                     print ('%s: Could not remove break after %i retries :(' % (str(breaktime.date()), max_retries))
+                    #df_time[timeframe[0]:timeframe[1]] = original_values
                 testresult = extract_test_infos(testresult)
                 if not adjresult:
                     adjresult = {'adj_status': '9: Not adjusted'}
+
+                for befaft, Bs in B_compare.iteritems():
+                    for name, val in Bs.iteritems():
+                        adjresult[name + '_' + befaft] = val
+
                 adjresult = extract_adjust_infos(adjresult)
                 merged_results = testresult.copy()
                 merged_results.update(adjresult)
@@ -208,23 +238,24 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
     :return:
     '''
     if skip_times and perform_adjustment:
-        raise Warning('Ignoring Breaktimes with activated adjustment!')
+        warnings.warn('Ignoring Breaktimes with activated adjustment!')
 
-    times_obj = CCITimes(test_prod,ignore_position=True, skip_times=skip_times) #TODO: activate for location conditional Timeframes
+    times_obj = CCITimes(test_prod, ignore_position=True,
+                         skip_times=skip_times)  # TODO: activate for location conditional Timeframes
 
     grid = SMECV_Grid_v042()
 
     workfolder = create_workfolder(path)
 
-    log_file = save_Log(workfolder, test_prod, ref_prod, anomaly, cells)
+    log_file = save_Log(workfolder, test_prod, ref_prod, anomaly, cells, backward_extended_timeframes)
 
     if cells == 'global':
         cells = grid.get_cells()
-    elif isinstance(cells,str):
+    elif isinstance(cells, str):
         cells = cells_for_continent(cells)
 
     save_obj = Results2D(grid, workfolder, times_obj.get_times(None, as_datetime=False)['breaktimes'],
-                         cell_files_path=os.path.join(workfolder,'temp_homogtest_cellfiles' ))
+                         cell_files_path=os.path.join(workfolder, 'temp_homogtest_cellfiles'))
 
     processes = []
     q = Queue()
@@ -232,7 +263,8 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
     # Split cells in equally sized packs for multiprocessing
     for process_no, cell_pack in enumerate(list(split(cells, parallel_processes))):
         p = Process(target=process_for_cells, args=(q, workfolder, save_obj, times_obj, cell_pack,
-                                                    log_file, test_prod, ref_prod, anomaly, backward_extended_timeframes,
+                                                    log_file, test_prod, ref_prod, anomaly,
+                                                    backward_extended_timeframes,
                                                     process_no, perform_adjustment))
         processes.append(p)
         p.start()
@@ -250,7 +282,8 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
 
     # Global files and images from testing
     save_obj_glob = GlobalResults(save_obj, post_process_grid)
-    global_file_name = save_obj_glob.save_global_file(keep_cell_files=True)  # Merge test result cell files to global file
+    global_file_name = save_obj_glob.save_global_file(
+        keep_cell_files=True)  # Merge test result cell files to global file
     log_file.add_line('Merged files to global file: %s' % global_file_name)
     image_files_names = save_obj_glob.create_image_files()  # Create 2D image files from test results
     log_file.add_line('Create global image files:')
@@ -282,9 +315,9 @@ if __name__ == '__main__':
     start('CCI_41_COMBINED',
           'merra2',
           r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output',
-          cells=[777,742],
+          cells='Australia',
           skip_times=None,
           anomaly=False,
-          backward_extended_timeframes = True,
+          backward_extended_timeframes=False,
           perform_adjustment=True,
-          parallel_processes=2)
+          parallel_processes=8)

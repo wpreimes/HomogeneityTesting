@@ -37,6 +37,7 @@ class HomogTest(object):
         self.test_prod = test_prod
         self.range = CCITimes(test_prod, ignore_position=True).get_times(None, as_datetime=False)['ranges']
         self.tests = tests
+        self.testresults = {test:None for test in self.tests}
         '''
         if self.ref_prod == 'ISMN-merge':
             self.data = QDEGdata_M(products=[test_prod])
@@ -103,7 +104,7 @@ class HomogTest(object):
         '''
 
         # number of measurements and datagroups
-        df = dataframe.rename(columns={dataframe.ix[:, 0].name: 'data'})
+        df = dataframe.rename(columns={'Q': 'data'})
         df = df.dropna()
         N = df.index.size
         K = df['group'].nunique()
@@ -114,7 +115,7 @@ class HomogTest(object):
             for i in range(K):
                 subset = df.ix[df['group'] == i]
                 groupmed = subset.data.median()
-                df.ix[df['group'] == i, 'groupmed'] = groupmed  # groupmedians
+                df.ix[df['group'] == i, 'groupmed'] = groupmed  # group medians
                 df.ix[df['group'] == i, 'groupme_diff'] = np.abs(
                     subset['data'] - groupmed)  # difference data-groupmedians
 
@@ -214,7 +215,7 @@ class HomogTest(object):
     def check_corr(self, df_time):
         # Check if any data is left for testdata and reference data
         if df_time.isnull().all().refdata or df_time.isnull().all().testdata:
-            raise Exception('1: No coinciding data for the selected timeframe')
+            raise Exception('1: No data for the selected timeframe')
 
         # Check if lengths of remaining datasets equal TODO: it always is, can be removed
         if df_time['refdata'].index.size != df_time['testdata'].index.size:
@@ -297,4 +298,5 @@ class HomogTest(object):
         if type(wilkoxon['h']) is str and type(fligner_killeen['h']) is str:
             raise Exception('6: WK test and FK test failed')
 
+        self.testresults[test for test in tests]
         return data, {'wilkoxon': wilkoxon, 'fligner_killeen': fligner_killeen}

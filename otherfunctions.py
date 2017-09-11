@@ -16,7 +16,6 @@ from datetime import datetime
 import csv
 
 
-
 def cci_extract(_string):
     cont = _string.upper().split('_')
     if len(cont) == 3:
@@ -102,8 +101,7 @@ def regress(data):
     dataframe = data.copy()
     out = dataframe.refdata
     dataframe = dataframe.dropna()
-    # Berechnet Korrelation zwischen Testdaten und Referenzdaten
-    R, pval = stats.pearsonr(dataframe.refdata, dataframe.testdata)
+    R, pval = stats.pearsonr(dataframe.refdata, dataframe.testdata) # Correlation between Refdata and Testdata
 
 
     if R < 0 or np.isnan(R):
@@ -122,19 +120,23 @@ def regress(data):
     return pd.Series(index=dataframe.index, data=np.squeeze(np.asarray(out))), R, pval, ress
 
 
-def resample_to_monthly(df, threshold=10):
+def temp_resample(df, how='M', threshold=0.33):
     '''
     Resample a dataframe to monthly values, if the number of valid values (not nans) in a month
     is smaller than the defined threshold, the monthly resample will be NaN
 
-    :param threshold: int
-        minimum number of days to resample to monthly
+    :param how: str
+        Time frame for temporal resampling, M = monthly, 10D = 10daily,...
+    :param threshold: float
+        % of valid days (not nan) in timeframe defined in 'how'
     :return: pd.DataFrame
         The monthly resampled Data
     '''
     concat = []
     for column in df.columns.values:
-        resampled = df[[column]].groupby(pd.TimeGrouper("M")).filter(lambda g: g.count() > threshold).resample('M').mean()
+        resampled = df[[column]].groupby(pd.TimeGrouper(how))\
+                                .filter(lambda g: g.count() > round(g.count()*threshold))\
+                                .resample(how).mean()
         concat.append(resampled)
 
     return pd.concat(concat, axis = 1)

@@ -411,12 +411,12 @@ class QDEGdata_3H(object):
 
 if __name__ == '__main__':
     from grid_functions import cells_for_continent
-    gpi = 346840
+    gpi = 453403
     timeframe = [datetime(1978,10,26), datetime(2016,12,31)]
-    data = QDEGdata_D(products=['merra2','CCI_31_COMBINED'])
+    data = QDEGdata_D(products=['merra2','CCI_41_PASSIVE'])
     ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
     bias_corr_refdata, rxy, pval, ress = regress(
-        ts[['CCI_31_COMBINED', 'merra2']].rename(columns={'CCI_31_COMBINED': 'testdata', 'merra2': 'refdata'}))
+        ts[['CCI_41_COMBINED', 'merra2']].rename(columns={'CCI_41_COMBINED': 'testdata', 'merra2': 'refdata'}))
     ts['merra2_corr'] = bias_corr_refdata
     print ts
 

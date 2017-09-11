@@ -21,11 +21,10 @@ from save_data import load_Log
 from smecv_grid.grid import SMECV_Grid_v042
 import xarray as xr
 from interface import HomogTest
-from otherfunctions import resample_to_monthly
+from otherfunctions import temp_resample
 
-import platform
 
-def valid_months_plot(workdir, testproduct, refproduct, min_monthly_values):
+def valid_months_plot(workdir, testproduct, refproduct, resample_method, min_monthly_values):
 
     #NOT IN PROCESS
 
@@ -35,12 +34,12 @@ def valid_months_plot(workdir, testproduct, refproduct, min_monthly_values):
     #Count values BEFORE breaktime
 
     #Count value AFTER breaktime
-    time_obj = CCITimes(testproduct)
+    time_obj = CCITimes(testproduct,ignore_position=True)
 
     grid = SMECV_Grid_v042() # type: CellGrid()
 
 
-    #grid = grid.subgrid_from_cells([564]) #TODO: Delete
+    #grid = grid.subgrid_from_cells([777]) #TODO: Delete
 
     gpis = grid.get_grid_points()[0]
     lons = grid.get_grid_points()[1]
@@ -49,12 +48,12 @@ def valid_months_plot(workdir, testproduct, refproduct, min_monthly_values):
 
     test_obj = HomogTest(testproduct, refproduct,['wilkoxon', 'fligner_killeen'], 0.01, False,None)
     DF_Points = pd.DataFrame(index = gpis, data = {'lon': lons, 'lat': lats} )
-    for breaktime in time_obj.get_times(ignore_conditions=True)['breaktimes']:
+    for breaktime in time_obj.get_times()['breaktimes']:
         DF_Points['before %s' % breaktime] = np.nan
         DF_Points['after %s' % breaktime] = np.nan
 
     for iteration, gpi in enumerate(gpis):
-        times = time_obj.get_times(ignore_conditions=True, as_datetime=False)
+        times = time_obj.get_times(as_datetime=False)
         starts = np.flipud(np.array([timeframe[0] for timeframe in times['timeframes']]))
         ends = np.flipud(np.array([timeframe[1] for timeframe in times['timeframes']]))
         breaktimes = np.flipud(times['breaktimes'])
@@ -70,7 +69,7 @@ def valid_months_plot(workdir, testproduct, refproduct, min_monthly_values):
                 end = datetime.strptime(end, '%Y-%m-%d')
 
                 df_subtime = df_time[['testdata']][start:end].dropna()
-                df_resample = resample_to_monthly(df_subtime, min_monthly_values)
+                df_resample = temp_resample(df_subtime, resample_method, min_monthly_values)
                 df_group, len_bef, len_aft = \
                     test_obj.group_by_breaktime(df_resample, breaktime, 3, ignore_exception=True)
 
@@ -489,4 +488,4 @@ if __name__ == '__main__':
     #inhomo_plot_with_stats(r'H:\HomogeneityTesting_data\output\v5',"HomogeneityTestResult_2007-01-01_image.nc")
     # compare_RTM_RTG(r'H:\HomogeneityTesting_data\output\CCI31EGU','merra2')
     # show_tested_gpis(r"H:\HomogeneityTesting_data\output\v15","HomogeneityTest_merra2_2011-10-01")
-    valid_months_plot(r'H:\HomogeneityTesting_data\output\CCI_available_data_plots', 'CCI_33_COMBINED','merra2', 10)
+    valid_months_plot(r'H:\HomogeneityTesting_data\output\CCI_available_data_plots', 'CCI_33_COMBINED','merra2', 'M', 0.33)

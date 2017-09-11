@@ -16,6 +16,7 @@ from otherfunctions import cci_extract, cci_string_combine
 # Order matters!!!!
 class CCITimes(object):
     def __init__(self, product, ignore_position=True, skip_times=None):
+
         timeframes = {'CCI_22_COMBINED': np.array(
             [['2011-10-01', '2014-12-31'], ['2007-01-01', '2012-07-01'],
              ['2002-07-01', '2011-10-01'], ['1998-01-01', '2007-01-01'],
@@ -95,7 +96,11 @@ class CCITimes(object):
                   'CCI_31_ACTIVE': np.array(['1991-08-01', '2015-12-31']),
                   'CCI_32_COMBINED': np.array(['1980-01-01', '2015-12-31']),
                   'CCI_33_COMBINED': np.array(['1978-10-26', '2016-12-31']),
-                  'CCI_41_COMBINED': np.array(['1978-10-26', '2016-12-31'])}
+                  'CCI_33_ACTIVE': np.array(['1991-08-05', '2016-12-31']),
+                  'CCI_33_PASSIVE': np.array(['1978-10-26', '2016-12-31']),
+                  'CCI_41_COMBINED': np.array(['1978-10-26', '2016-12-31']),
+                  'CCI_41_ACTIVE': np.array(['1991-08-05', '2016-12-31']),
+                  'CCI_41_PASSIVE': np.array(['1978-10-26', '2016-12-31'])}
 
         if product not in timeframes.keys() or product not in breaktimes.keys() or product not in ranges.keys():
             self.product = self._init_timeframes_for_adjusted(product)
@@ -115,6 +120,9 @@ class CCITimes(object):
 
         if not self.ignore_position:
             self.grid_points = SMECV_Grid_v042().get_grid_points()
+
+        if self.skip_times and not self.ignore_position and self.gpi_dep_times():
+            raise Exception('Skipping breaktimes for gpi dependent timeframes ambiguous')
 
     @staticmethod
     def as_string(datetimes):
@@ -142,7 +150,7 @@ class CCITimes(object):
         :param skip_times: list
         :return: np.array
         '''
-        return [datestrings[i] for i in range(datestrings.shape[0]) if i not in skip_times]
+        return [datestrings[i] for i in range(len(datestrings)) if i not in skip_times]
 
     def _init_timeframes_for_adjusted(self, product):
         info = cci_extract(product)
@@ -281,7 +289,7 @@ class CCITimes(object):
 
 
 if __name__ == '__main__':
-    ds = CCITimes('CCI_33_COMBINED', ignore_position=False)
+    ds = CCITimes('CCI_33_COMBINED', ignore_position=True, skip_times=[0,1,2,3,4,5,6,8])
     for gpi in [620964, 805227]:  # First Point < 37 Lat, second > 37 Lat
         times = ds.get_times(gpi, as_datetime=True)
         print 'breaktimes:'
@@ -290,10 +298,10 @@ if __name__ == '__main__':
         print times['timeframes']
         print 'ranges:'
         print times['ranges']
-        print (ds.timeframe_for_breaktime(gpi, times['breaktimes'][1]))
-        print (ds.breaktime_for_timeframe(gpi, times['timeframes'][1]))
-        print (ds.get_adjacent(gpi, times['timeframes'][1], 2))
-        print (ds.get_adjacent(gpi, times['breaktimes'][5], -2))
+        print (ds.timeframe_for_breaktime(gpi, times['breaktimes'][0]))
+        print (ds.breaktime_for_timeframe(gpi, times['timeframes'][0]))
+        #print (ds.get_adjacent(gpi, times['timeframes'][1], 2))
+        #print (ds.get_adjacent(gpi, times['breaktimes'][5], -2))
     ds = CCITimes('CCI_33_COMBINED', ignore_position=True)
     for gpi in [620964, 805227]:  # First Point < 37 Lat, second > 37 Lat
         times = ds.get_times(gpi, as_datetime=False)
@@ -303,7 +311,7 @@ if __name__ == '__main__':
         print times['timeframes']
         print 'ranges:'
         print times['ranges']
-        print (ds.timeframe_for_breaktime(gpi, times['breaktimes'][1]))
-        print (ds.breaktime_for_timeframe(gpi, times['timeframes'][1]))
-        print (ds.get_adjacent(gpi, times['timeframes'][1], 2))
-        print (ds.get_adjacent(gpi, times['breaktimes'][5], -2))
+        print (ds.timeframe_for_breaktime(gpi, times['breaktimes'][0]))
+        print (ds.breaktime_for_timeframe(gpi, times['timeframes'][0]))
+        #print (ds.get_adjacent(gpi, times['timeframes'][1], 2))
+        #print (ds.get_adjacent(gpi, times['breaktimes'][5], -2))

@@ -17,7 +17,7 @@ from smecv_grid.grid import SMECV_Grid_v042
 
 
 class save_Log(object):
-    def __init__(self, workfolder, test_prod, ref_prod, anomaly, cells):
+    def __init__(self, workfolder, test_prod, ref_prod, anomaly, cells, backward_extended_timeframes):
         # type: (str, str, str, str, list) -> None
         self.workfolder = workfolder
 
@@ -28,6 +28,7 @@ class save_Log(object):
             f.write('Reference Product: %s \n' % ref_prod)
             f.write('Anomaly data: %s \n' % str(anomaly))
             f.write('Input Cells: %s \n' % cells)
+            f.write('Backward Extended Timeframes: %s \n' % str(backward_extended_timeframes))
             f.write('=====================================\n')
             f.write('\n')
 
@@ -37,18 +38,20 @@ class save_Log(object):
         with open(os.path.join(self.workfolder, 'log.txt'), 'a') as f:
             f.write(string + '\n')
 
+
 class load_Log(object):
     def __init__(self, workfolder):
         self.workfolder = workfolder
 
     def get_products(self):
-        with open(os.path.join(self.workfolder,'log.txt'), mode='r') as f:
+        with open(os.path.join(self.workfolder, 'log.txt'), mode='r') as f:
             lines = [line.rstrip('\n') for line in f]
 
         test_prod = lines[2].split(' ')[2]
         ref_prod = lines[3].split(' ')[2]
 
         return {'test_prod': test_prod, 'ref_prod': ref_prod}
+
 
 class Results2D(object):
     def __init__(self, grid, path, breaktimes, cell_files_path=None):
@@ -84,7 +87,6 @@ class Results2D(object):
     def reset_data(self):
         self.data = {breaktime: {'gpi': []} for breaktime in self.breaktimes}
 
-
     def add_data(self, gpi, breaktime, data_dict):
         '''
         Fill buffer by adding data for gpi
@@ -109,10 +111,10 @@ class Results2D(object):
         for breaktime, data_dict in self.data.iteritems():
             df = pd.DataFrame.from_dict(data_dict)
             df = df.set_index('gpi')
-            df = df.rename(columns={column_name : column_name + '_' + breaktime for column_name in df.columns.values})
+            df = df.rename(columns={column_name: column_name + '_' + breaktime for column_name in df.columns.values})
             dataframes.append(df)
 
-        df = pd.concat(dataframes, axis=1) #type: pd.DataFrame
+        df = pd.concat(dataframes, axis=1)  # type: pd.DataFrame
 
         if not df.index.is_unique:
             raise Exception('df gpis not unique')
@@ -128,10 +130,10 @@ class Results2D(object):
                 if loc_id not in self.global_gpis:
                     self.global_gpis.append(loc_id)
                 else:
-                    raise Exception('Trying to set existing GPI %i' %loc_id)
+                    raise Exception('Trying to set existing GPI %i' % loc_id)
         return_gpis = self.global_gpis
         self.reset_data()
-        self.global_gpis=[]
+        self.global_gpis = []
         return return_gpis
 
 
@@ -147,11 +149,11 @@ def extract_test_infos(data_dict):
         if type(wk) is str:
             # wk test failed and contains error message
             wk = np.nan
-            status = 6 # This is just an identification number, no math meaning
+            status = 6  # This is just an identification number, no math meaning
         if type(fk) is str:
             # fk failed and contains error message
             fk = np.nan
-            status = 7 # This is just an identification number, no math meaning
+            status = 7  # This is just an identification number, no math meaning
 
         all = 4.0
         if wk == 1:
@@ -169,17 +171,19 @@ def extract_adjust_infos(data_dict):
     # type: (dict) -> dict
     status = int(data_dict['adj_status'][0])
     if status not in [0]:
-        return {'slope': np.nan, 'intercept': np.nan, 'part1_B1': np.nan, 'part1_B2': np.nan,
-                'part2_B1': np.nan, 'part2_B2': np.nan, 'adj_status': status}
+        return {'slope': np.nan, 'intercept': np.nan,
+                'k1_before': np.nan, 'k2_before': np.nan,
+                'd1_before': np.nan, 'd2_before': np.nan,
+                'k1_after': np.nan, 'k2_after': np.nan,
+                'd1_after': np.nan, 'd2_after': np.nan,
+                'adj_status': status}
     else:
         data_dict['adj_status'] = status
 
-        return data_dict  #DataDict from Adjustment incl. status
-
+        return data_dict  # DataDict from Adjustment incl. status
 
 
 class GlobalResults(Results2D):
-
     def __init__(self, baseObject, post_process_grid):
         self.__class__ = type(baseObject.__class__.__name__,
                               (self.__class__, baseObject.__class__),
@@ -193,12 +197,10 @@ class GlobalResults(Results2D):
 
         self.post_process_grid = post_process_grid
 
-
     def save_global_file(self, keep_cell_files=False):
 
         with GriddedPointData(self.cell_files_path, grid=self.post_process_grid,
                               fn_format='{:04d}.nc') as nc:
-
             nc.to_point_data(os.path.join(self.path, self.fn_global))
 
         if not keep_cell_files:
@@ -211,42 +213,42 @@ class GlobalResults(Results2D):
             'test_results': 'Break detection classes by Hopothesis tests.'
                             '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None',
             'test_status': '0 = Testing performed,'
-                      '1 = No coinciding data for timeframe,'
-                      '2 = Test TS and Ref TS do not match,'
-                      '3 = Spearman correlation too low,'
-                      '4 = Min. Dataseries len. not reached,'
-                      '5 = neg/nan correl. aft. bias corr.,'
-                      '6 = Error during WK testing,'
-                      '7 = Error during FK testing,'
-                      '8 = WK test and FK test failed,'
-                      '9 = Error reading gpi',
+                           '1 = No data for timeframe,'
+                           '2 = Test TS and Ref TS do not match,'
+                           '3 = Spearman correlation too low,'
+                           '4 = Min. Dataseries len. not reached,'
+                           '5 = neg/nan correl. aft. bias corr.,'
+                           '6 = Error during WK testing,'
+                           '7 = Error during FK testing,'
+                           '8 = WK test and FK test failed,'
+                           '9 = Error reading gpi',
             'adj_status': '0: Adjustment performed,'
-                     '1 = No adjustment necessary,'
-                     '2 = negative correlation,'
-                     '3 = positive correlation insignificant,'
-                     '4 = Model param 1 not sufficiently adapted,'
-                     '5 = Model param 2 not sufficiently adapted,'
-                     '6 = B tolerance after adj. not reached,'
-                     '9 = Not adjusted' }
+                          '1 = No adjustment necessary,'
+                          '2 = negative correlation,'
+                          '3 = positive correlation insignificant,'
+                          '4 = Model param 1 not sufficiently adapted,'
+                          '5 = Model param 2 not sufficiently adapted,'
+                          '6 = B tolerance after adj. not reached,'
+                          '9 = Not adjusted'}
 
         global_file = xr.open_dataset(os.path.join(self.path, self.fn_global))
         df = global_file.to_dataframe()
 
-        filenames =[]
+        filenames = []
         for breaktime_str in self.breaktimes:
-            df_breaktime = df[['lat','lon']]
+            df_breaktime = df[['lat', 'lon']]
             for col_name in df.columns.values:
                 if breaktime_str in col_name:
                     [var, breaktime] = re.split(r'[_](?=[0-9])', col_name)
                     df_breaktime[var] = df[col_name]
             df_breaktime['location_id'] = df['location_id'].astype(int)
-            df_breaktime = df_breaktime.sort_values(['lat','lon']) \
-                                       .set_index(['lat','lon'])
+            df_breaktime = df_breaktime.sort_values(['lat', 'lon']) \
+                .set_index(['lat', 'lon'])
 
             global_image = df_breaktime.to_xarray()
 
             for name, val in file_meta_dict.iteritems():
-                global_image.variables[name].attrs['Values']=val
+                global_image.variables[name].attrs['Values'] = val
 
             filename = self.fn_images_base % breaktime_str
             global_image.to_netcdf(os.path.join(self.path, filename))
@@ -256,11 +258,11 @@ class GlobalResults(Results2D):
 
 
 if __name__ == '__main__':
-    gpis = range(392888,392901)+range(391448,391461)
+    gpis = range(392888, 392901) + range(391448, 391461)
     grid = SMECV_Grid_v042()
     save_obj = Results2D(grid, r'C:\Temp', ['2000-01-01'])
     for gpi in gpis:
-        save_obj.add_data(gpi, '2000-01-01', {'testresult':{'status_test':'1'},
+        save_obj.add_data(gpi, '2000-01-01', {'testresult': {'status_test': '1'},
                                               'adjresult': {'status_adj': '1'}})
     global_gpis = save_obj.save_to_gridded_netcdf()
 
