@@ -10,13 +10,14 @@ import pandas as pd
 import scipy.stats as stats
 from typing import Union
 from pytesmo.time_series.anomaly import calc_anomaly
-
+from collections import Counter
 from datetime import datetime
 
+from scipy.stats import fligner, levene
 from cci_timeframes import CCITimes
 from otherfunctions import regress, datetime2matlabdn
 from import_satellite_data import QDEGdata_M, QDEGdata_D
-
+from import_ismn_data import ISMNdataUSA
 
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
@@ -38,13 +39,9 @@ class HomogTest(object):
         self.range = CCITimes(test_prod, ignore_position=True).get_times(None, as_datetime=False)['ranges']
         self.tests = tests
         self.testresults = {test:None for test in self.tests}
-        '''
-        if self.ref_prod == 'ISMN-merge':
-            self.data = QDEGdata_M(products=[test_prod])
-            self.ismndata = ISMNdataUSA(self.timeframe, self.breaktime, max_depth=0.1)
-        else:
-        '''
         self.data = QDEGdata_D(products=[self.ref_prod, self.test_prod])
+        if self.ref_prod == 'ISMN-Merge':
+            self.ismndata = ISMNdataUSA('merra2', max_depth=0.1)
 
         self.alpha = alpha
         self.anomaly = anomaly
@@ -52,6 +49,9 @@ class HomogTest(object):
         if adjusted_ts_path:
             self.adjusted_ts_path = adjusted_ts_path
 
+
+    def get_testresults(self):
+        return self.testresults
 
 
     def check_testresult(self, testresult):
@@ -69,6 +69,30 @@ class HomogTest(object):
                     break_found_by.append(test)
 
             return break_found_by, False
+
+    def compare_testresults(self, reference, result, priority=None):
+        ref_found_by, ref_is_homog = self.check_testresult(reference)
+        res_found_by, res_is_homog = self.check_testresult(result)
+
+        if not ref_is_homog and res_is_homog:
+            # Break was removed --> better
+            return True
+        elif not ref_is_homog and not res_is_homog:
+            # Both found break
+            # compare tests
+            if Counter(ref_found_by) == Counter(res_found_by): # Same tests found break
+                return False # --> worse
+            elif priority:
+                for p in priority:
+                    if (p in ref_found_by) and (p not in res_found_by):
+                        return True #--> Priority was removed
+                    else:
+                        continue # Move to next Priority
+                return False # Priority was not removed
+            else:
+                return False
+        else:
+            return True
 
 
     @staticmethod
@@ -164,9 +188,38 @@ class HomogTest(object):
         return h, stats_fk
 
     @staticmethod
-    def vn_test():
-        #TODO: implement von Neumann test
-        pass
+    def scipy_fk_test(dataframe, mode='median', alpha=0.1):
+        df = dataframe.rename(columns={'Q': 'data'})
+        df = df.dropna()
+        sample1 = df[df['group'==0.].index]['Q'].values
+        sample2 = df[df['group'==1.].index]['Q'].values
+
+        stats, pval = fligner(sample1, sample2, center=mode)
+
+        stats_fk = {'chi': {'z': stats, 'pval': pval}}
+
+        if stats_fk['chi']['pval'] < alpha:
+            h = 1
+        else:
+            h = 0
+        return h, stats_fk
+
+    @staticmethod
+    def lv_test(dataframe, mode='median', alpha=0.1):
+        df = dataframe.rename(columns={'Q': 'data'})
+        df = df.dropna()
+        sample1 = df[df['group'==0.].index]['Q'].values
+        sample2 = df[df['group'==1.].index]['Q'].values
+
+        stats, pval = levene(sample1, sample2, center=mode)
+
+        stats_lv = {'chi': {'z': stats, 'pval': pval}}
+
+        if stats_lv['chi']['pval'] < alpha:
+            h = 1
+        else:
+            h = 0
+        return h, stats_lv
 
     def read_gpi(self, gpi, start, end):
         # type: (int) -> pd.DataFrame
@@ -282,9 +335,7 @@ class HomogTest(object):
             except:
                 wilkoxon = {'h': 'Error during WK testing'}
                 pass
-        else:
-            wilkoxon = {'h': 'WK not selected'}
-
+            self.testresults['wilkoxon'] = wilkoxon
         if 'fligner_killeen' in tests:
             try:
                 h_fk, stats_fk = self.fk_test(data[['Q', 'group']], mode='median', alpha=self.alpha)
@@ -292,10 +343,15 @@ class HomogTest(object):
             except:
                 fligner_killeen = {'h': 'Error during FK testing'}
                 pass
-        else:
-            fligner_killeen = {'h': 'FK not selected'}
+            self.testresults['fligner_killeen'] = fligner_killeen
+        if 'scipy_fligner_killeen' in tests:
+            try:
+                h_fk, stats_fk = self.scipy_fk_test(data[['Q', 'group']], mode='median', alpha=self.alpha)
+                fligner_killeen = {'h': h_fk, 'stats': stats_fk}
+            except:
+                fligner_killeen = {'h': 'Error during FK testing'}
+                pass
+            self.testresults['fligner_killeen'] = fligner_killeen
 
-        if type(wilkoxon['h']) is str and type(fligner_killeen['h']) is str:
-            raise Exception('6: WK test and FK test failed')
-
-        return data, {'wilkoxon': wilkoxon, 'fligner_killeen': fligner_killeen}
+        self.testresults.update({'test_status': '0: Testing successful'})
+        return data, self.testresults

@@ -35,5 +35,5 @@ def grid_points_for_cells(grid, cells):
 
 
 if __name__ == '__main__':
-    cells = cells_for_continent('Australia')
+    cells = cells_for_continent('United_States')
     print cells

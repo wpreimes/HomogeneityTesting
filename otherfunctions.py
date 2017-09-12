@@ -245,7 +245,7 @@ def merge_ts(dataframe):
     -Return gap filled reference TS
     '''
     max_series_name = np.argmax(dataframe.notnull().sum().to_frame()[0])
-    quick_corr = dataframe.corr().sort(max_series_name, ascending=False).index.values[1:]
+    quick_corr = dataframe.corr().sort_values(max_series_name, ascending=False).index.values[1:]
     # Order other TSs via correlation to max_series and return list corr_ordered
     # Improve max_series first with best fitting other,than second best fitting other,...
     DF_other_series = pd.DataFrame()
@@ -255,10 +255,6 @@ def merge_ts(dataframe):
         if corr >= 0.8 and pval < 0.01:
             DF_other_series[other_series_name] = dataframe[other_series_name]
 
-            # dataframe=dataframe.rename(columns={max_series_name:'refdata',other_series_name:'testdata'})
-
-            # out,R,pval,ress=regress(dataframe)
-            # DF_Sensor[max_series_name+'_new']=out
 
     max_series = dataframe[max_series_name]
     other_series_merged = DF_other_series.mean(axis=1)

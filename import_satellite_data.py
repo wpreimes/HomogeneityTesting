@@ -15,7 +15,7 @@ from merra.interface import MERRA2_Ts
 from pynetcf.time_series import GriddedNcIndexedRaggedTs
 import os
 from datetime import datetime
-from otherfunctions import merge_ts, regress, cci_extract, cci_string_combine
+from otherfunctions import regress, cci_extract, cci_string_combine
 from read_adjusted_ts import cciAdjustedTs
 import re
 from rsroot import root_path
@@ -413,7 +413,7 @@ if __name__ == '__main__':
     from grid_functions import cells_for_continent
     gpi = 453403
     timeframe = [datetime(1978,10,26), datetime(2016,12,31)]
-    data = QDEGdata_D(products=['merra2','CCI_41_PASSIVE'])
+    data = QDEGdata_D(products=['merra2','CCI_41_COMBINED'])
     ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
     bias_corr_refdata, rxy, pval, ress = regress(
         ts[['CCI_41_COMBINED', 'merra2']].rename(columns={'CCI_41_COMBINED': 'testdata', 'merra2': 'refdata'}))

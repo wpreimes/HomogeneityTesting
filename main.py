@@ -28,16 +28,18 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
     # Function for multicore processing
 
     print('Start process %i' % process_no)
-    process_csv_file = 'saved_points_%s.csv' % process_no
+
     ########################################## TODO: Values to change
     adjusted_data_path = os.path.join(workfolder, test_prod + '_adjusted')
     min_data_for_temp_resampling = 0.33  # If CCI data contains less values, the monthly value is resampled as nan
     min_data_size = 3  # Minimum number of monthly values before/after break to perform homogeneity testing # TODO: different value?
     resample_method = 'M'
     refdata_correction_for = 'iteration'  # iteration, full or timeframe
-    ##########################################
     tests = ['wilkoxon', 'fligner_killeen']
+    ##########################################
 
+
+    process_csv_file = 'saved_points_%s.csv' % process_no
     test_obj = HomogTest(test_prod,
                          ref_prod,
                          tests,
@@ -63,16 +65,11 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
 
             # if iteration%10 == 0:
             print 'processing gpi %i (%i of %i)' % (gpi, iteration, grid_points.size)
-            '''
-            if test_obj.ref_prod == 'ISMN-merge':
-                valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
-
-                if gpi not in valid_insitu_gpis.keys():
-                    continue
-            '''
-            # test_obj.save_as_mat(gpi=gpi)
             try:
                 df_time = test_obj.read_gpi(gpi, start=test_obj.range[0], end=test_obj.range[1])
+                #if test_obj.ref_prod == 'ISMN-merge': #TODO: implement
+                    #df_time[test_obj.ref_prod] = test_obj.ismndata.read_gpi(gpi, start=test_obj.range[0], end=test_obj.range[1])
+                    #valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
             except:
                 continue
 
@@ -95,6 +92,7 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                 # In case that after adjustment a break is still found, re-correct the reference data to
                 # the (insufficiently) corrected test data and repeat adjustment (< max_retries times)
                 original_values = df_time[timeframe[0]:timeframe[1]]
+                original_results = None
                 while retries < max_retries and (not testresult or
                                                      not test_obj.check_testresult(testresult)[1]):
 
@@ -123,7 +121,9 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         data['Q'] = data['testdata'] - data['refdata']
                         # Run Tests
                         _, testresult = test_obj.run_tests(data=data)
-                        testresult.update({'test_status': '0: Testing successful'})
+                        if not original_results:
+                            original_results = testresult
+
                     except Exception as e:
                         testresult = {'test_status': str(e)}
                         break
@@ -169,7 +169,7 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         '''
                         try:  # Time Series Adjustment
                             # TODO: point dependent adjustment parameter?
-                            if retries == 0 and testresult['wilkoxon']['h'] == 1 and testresult['fligner_killeen']['h'] == 0:
+                            if retries == 0 and testresult['wilkoxon']['h'] == 1:
                                 adjust_param = 'd'
                             else:
                                 adjust_param = 'both'
@@ -192,9 +192,14 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         break
 
                 # Merge test results and adjustresults for gpi and add to save object
-                if testresult['test_status'][0] == '0' and not test_obj.check_testresult(testresult)[1]:  # todo: ugly
+
+                if testresult['test_status'][0] == '0' and \
+                        not test_obj.check_testresult(testresult)[1]:
                     print ('%s: Could not remove break after %i retries :(' % (str(breaktime.date()), max_retries))
-                    #df_time[timeframe[0]:timeframe[1]] = original_values
+                    if test_obj.compare_testresults(original_results, testresult, priority=['wilkoxon']):
+                        # If adjustment did not improve results
+                        df_time[timeframe[0]:timeframe[1]] = original_values
+
                 testresult = extract_test_infos(testresult)
                 if not adjresult:
                     adjresult = {'adj_status': '9: Not adjusted'}
@@ -210,11 +215,12 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
 
             if dataset:
                 dataset.write(gpi, df_time[['testdata']].rename(columns={'testdata': test_obj.test_prod + '_adjusted'}))
+        try:
+            saved_points = save_obj.save_to_gridded_netcdf()  # Save data for the cell to netcdf file
 
-        saved_points = save_obj.save_to_gridded_netcdf()  # Save data for the cell to netcdf file
-
-        csv_read_write(os.path.join(workfolder, process_csv_file), 'write', saved_points)
-
+            csv_read_write(os.path.join(workfolder, process_csv_file), 'write', saved_points)
+        except:
+            continue
         # Add Info to log file
         log_file.add_line('%s: Finished testing for cell %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), cell))
 
@@ -315,7 +321,7 @@ if __name__ == '__main__':
     start('CCI_41_COMBINED',
           'merra2',
           r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output',
-          cells='Australia',
+          cells='global',
           skip_times=None,
           anomaly=False,
           backward_extended_timeframes=False,
