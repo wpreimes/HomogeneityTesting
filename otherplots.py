@@ -20,7 +20,7 @@ from longest_homogeneous_period import calc_longest_homogeneous_period
 from save_data import load_Log
 from smecv_grid.grid import SMECV_Grid_v042
 import xarray as xr
-from interface import HomogTest
+from interface import BreakTestData
 from otherfunctions import temp_resample
 from cci_timeframes import CCITimes
 
@@ -46,7 +46,7 @@ def valid_months_plot(workdir, testproduct, refproduct, resample_method, min_mon
     lats = grid.get_grid_points()[2]
 
 
-    test_obj = HomogTest(testproduct, refproduct,['wilkoxon', 'fligner_killeen'], 0.01, False,None)
+    test_obj = BreakTestData(testproduct, refproduct,False)
     DF_Points = pd.DataFrame(index = gpis, data = {'lon': lons, 'lat': lats} )
     for breaktime in time_obj.get_times()['breaktimes']:
         DF_Points['before %s' % breaktime] = np.nan
@@ -284,7 +284,7 @@ def show_processed_gpis(workdir,plottype, filename):
     else:
         statname = 'adj_status'
         title = 'BreakAdjustment Coverage \n %s|%s|%s' % (test_prod, ref_prod, breaktime_str)
-        plotfile_name = 'adjustment_coverage_%s_%s' % (ref_prod, breaktime_str)
+        plotfile_name = 'ADJ_coverage_%s_%s' % (ref_prod, breaktime_str)
 
     status_var = ncfile.variables[statname].attrs['Values']
 
@@ -345,8 +345,8 @@ def show_processed_gpis(workdir,plottype, filename):
 
     groups_strings = status_var.split(',')
     for string in groups_strings:
-        string = string.split('=')
-        meta.update({int(string[0]): string[1]})
+        splitstring = string.split('=')
+        meta.update({int(splitstring[0]): splitstring[1]})
 
     textbox = 'Total ground points: %i\n' % all_gpis
 

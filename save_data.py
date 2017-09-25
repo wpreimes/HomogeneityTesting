@@ -222,14 +222,13 @@ class GlobalResults(Results2D):
                            '7 = Error during FK testing,'
                            '8 = WK test and FK test failed,'
                            '9 = Error reading gpi',
-            'adj_status': '0: Adjustment performed,'
+            'adj_status': '0 = Adjustment performed,'
                           '1 = No adjustment necessary,'
                           '2 = negative correlation,'
                           '3 = positive correlation insignificant,'
-                          '4 = Model param 1 not sufficiently adapted,'
-                          '5 = Model param 2 not sufficiently adapted,'
-                          '6 = B tolerance after adj. not reached,'
-                          '9 = Not adjusted'}
+                          '4 = max number of iterations reached,'
+                          '5 = max. iter. reached w.o improvements,'
+                          '9 = No adjustment attempted'}
 
         global_file = xr.open_dataset(os.path.join(self.path, self.fn_global))
         df = global_file.to_dataframe()
@@ -240,8 +239,8 @@ class GlobalResults(Results2D):
             for col_name in df.columns.values:
                 if breaktime_str in col_name:
                     [var, breaktime] = re.split(r'[_](?=[0-9])', col_name)
-                    df_breaktime[var] = df[col_name]
-            df_breaktime['location_id'] = df['location_id'].astype(int)
+                    df_breaktime.loc[df[col_name].index,var] = df[col_name]
+            df_breaktime.loc[df['location_id'].index, 'location_id'] = df['location_id'].astype(int)
             df_breaktime = df_breaktime.sort_values(['lat', 'lon']) \
                 .set_index(['lat', 'lon'])
 

@@ -12,7 +12,7 @@ from datetime import datetime
 from multiprocessing import Process, Queue
 from pynetcf.time_series import GriddedNcIndexedRaggedTs
 from otherfunctions import temp_resample, csv_read_write, join_files, split, create_workfolder
-from interface import HomogTest
+from interface import BreakTestBase
 from cci_timeframes import CCITimes
 from save_data import Results2D, extract_adjust_infos, extract_test_infos, save_Log, GlobalResults
 from grid_functions import cells_for_continent
@@ -41,12 +41,12 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
 
 
     process_csv_file = 'saved_points_%s.csv' % process_no
-    test_obj = HomogTest(test_prod,
-                         ref_prod,
-                         tests.values(),
-                         0.01,  # TODO: Choose higher alpha value eg 0.05 or 0.1
-                         anomaly,
-                         perform_adjustment)
+    test_obj = BreakTestBase(test_prod,
+                             ref_prod,
+                             tests.values(),
+                             0.01,  # TODO: Choose higher alpha value eg 0.05 or 0.1
+                             anomaly,
+                             perform_adjustment)
 
     if perform_adjustment:
         dataset = GriddedNcIndexedRaggedTs(path=adjusted_data_path, grid=(save_obj.pre_process_grid), mode='w')
@@ -129,8 +129,6 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         data['Q'] = data['testdata'] - data['refdata']
                         # Run Tests
                         _, testresult = test_obj.run_tests(data=data)
-                        print breaktime
-                        print testresult
                         if not original_results:
                             original_results = testresult
 
@@ -211,19 +209,23 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
 
                 # Merge test results and adjustresults for gpi and add to save object
                 if model_plots and retries > 0:
+                    print breaktime
+                    print testresult
                     plt.show()
                 else:
                     plt.close('all')
                 if testresult['test_status'][0] == '0' and \
                         not test_obj.check_testresult(testresult)[1]:
                     print ('%s: Could not remove break after %i retries :(' % (str(breaktime.date()), max_retries))
+                    adjresult['adj_status'] = '4: max number of iterations reached'
                     if test_obj.compare_testresults(original_results, testresult, priority=['wilkoxon']):
                         # If adjustment did not improve results
                         df_time[timeframe[0]:timeframe[1]] = original_values
+                        adjresult['adj_status'] = '5: max. iter. reached w.o improvements'
 
                 testresult = extract_test_infos(testresult,tests)
                 if not adjresult:
-                    adjresult = {'adj_status': '9: Not adjusted'}
+                    adjresult = {'adj_status': '9: No adjustment attempted'}
 
                 for befaft, Bs in B_compare.iteritems():
                     for name, val in Bs.iteritems():
@@ -343,7 +345,7 @@ if __name__ == '__main__':
     start('CCI_41_COMBINED',
           'merra2',
           r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output',
-          cells=[2244],
+          cells=[813],
           skip_times=None,
           anomaly=False,
           backward_extended_timeframes=False,

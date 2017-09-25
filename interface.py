@@ -21,24 +21,17 @@ from import_ismn_data import ISMNdataUSA
 
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
+class BreakTestData(object):
+    def __init__(self, test_prod, ref_prod, anomaly, adjusted_ts_path=None):
+        # type: (str,str,Union(bool,str)) -> None
 
-class HomogTest(object):
-    def __init__(self, test_prod, ref_prod, tests, alpha, anomaly, adjusted_ts_path=None):
-        # type: (str,str,list,float,Union(bool,str)) -> None
-        '''
-        :param test_prod:
-        :param ref_prod:
-        :param timeframe:
-        :param breaktime:
-        :param tests:
-        :param alpha:
-        :param anomaly: To use anomaly data choose 'timeframe' or 'ccirange', else False
-        '''
+
         self.ref_prod = ref_prod
         self.test_prod = test_prod
-        self.range = CCITimes(test_prod, ignore_position=True).get_times(None, as_datetime=False)['ranges']
-        self.tests = tests
-        self.testresults = {test:None for test in self.tests}
+
+        self.range = CCITimes(self.test_prod, ignore_position=True).get_times(None, as_datetime=False)['ranges']
+
+        self.anomaly = anomaly
 
         if self.ref_prod == 'ISMN-Merge':
             self.ismndata = ISMNdataUSA('merra2', max_depth=0.1)
@@ -46,11 +39,64 @@ class HomogTest(object):
         else:
             self.data = QDEGdata_D(products=[self.ref_prod, self.test_prod])
 
-        self.alpha = alpha
-        self.anomaly = anomaly
-
-        if adjusted_ts_path:
+        if adjusted_ts_path: #todo: move to adjustment class
             self.adjusted_ts_path = adjusted_ts_path
+
+
+
+    def read_gpi(self, gpi, start, end):
+        # type: (int) -> pd.DataFrame
+
+
+        # Import the test data and reference datasets for the active ground point
+        if self.anomaly == 'ccirange':
+            #Calculate the anomaly over the whole CCI version time frame (1978-present)
+            range = [time.strftime('%Y-%m-%d') for time in self.range]
+            try:
+                df_time = (self.data).read_gpi(gpi, range[0], range[1])
+                df_time = df_time / 100  # type: pd.DataFrame
+                df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
+                df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
+            except:
+                raise Exception('9: Could not import data for gpi %i' % gpi)
+
+            if self.ref_prod == 'ISMN-Merge':
+                print('CCI range anomaly wont work with ISMN data')
+
+        else:
+            try:
+                if self.ref_prod == 'ISMN-Merge':
+                    df_time = self.data.read_gpi(gpi, start, end)
+
+                    df_time = df_time / 100  # type: pd.DataFrame
+
+                    df_time['ISMN-Merge'] = self.ismndata.read_gpi(gpi, start, end)
+                else:
+                    df_time = self.data.read_gpi(gpi, start, end)
+                    df_time = df_time / 100
+
+                if self.anomaly == 'timeframe':
+                    df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
+                    df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
+            except:
+                raise Exception('9: Could not import data for gpi %i' % gpi)
+
+        df_time = df_time.rename(columns={self.ref_prod: 'refdata',
+                                          self.test_prod: 'testdata'})
+
+        # Drop days where either dataset is missing
+        return df_time
+
+
+class BreakTestBase(BreakTestData):
+    def __init__(self,test_prod, ref_prod, tests, alpha, anomaly, adjusted_ts_path=None):
+        # type: (str,str,list,float,Union(bool,str)) -> None
+
+        BreakTestData.__init__(self, test_prod, ref_prod, anomaly, adjusted_ts_path=None)
+
+        self.tests = tests
+        self.testresults = {test:None for test in self.tests}
+        self.alpha = alpha
 
 
     def get_testresults(self):
@@ -223,49 +269,6 @@ class HomogTest(object):
         else:
             h = 0
         return h, stats_lv
-
-    def read_gpi(self, gpi, start, end):
-        # type: (int) -> pd.DataFrame
-
-
-        # Import the test data and reference datasets for the active ground point
-        if self.anomaly == 'ccirange':
-            #Calculate the anomaly over the whole CCI version time frame (1978-present)
-            range = [time.strftime('%Y-%m-%d') for time in self.range]
-            try:
-                df_time = (self.data).read_gpi(gpi, range[0], range[1])
-                df_time = df_time / 100  # type: pd.DataFrame
-                df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
-                df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
-            except:
-                raise Exception('9: Could not import data for gpi %i' % gpi)
-
-            if self.ref_prod == 'ISMN-Merge':
-                print('CCI range anomaly wont work with ISMN data')
-
-        else:
-            try:
-                if self.ref_prod == 'ISMN-Merge':
-                    df_time = self.data.read_gpi(gpi, start, end)
-
-                    df_time = df_time / 100  # type: pd.DataFrame
-
-                    df_time['ISMN-Merge'] = self.ismndata.read_gpi(gpi, start, end)
-                else:
-                    df_time = self.data.read_gpi(gpi, start, end)
-                    df_time = df_time / 100
-
-                if self.anomaly == 'timeframe':
-                    df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
-                    df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
-            except:
-                raise Exception('9: Could not import data for gpi %i' % gpi)
-
-        df_time = df_time.rename(columns={self.ref_prod: 'refdata',
-                                          self.test_prod: 'testdata'})
-
-        # Drop days where either dataset is missing
-        return df_time
 
 
     def check_corr(self, df_time):
