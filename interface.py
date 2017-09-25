@@ -39,9 +39,12 @@ class HomogTest(object):
         self.range = CCITimes(test_prod, ignore_position=True).get_times(None, as_datetime=False)['ranges']
         self.tests = tests
         self.testresults = {test:None for test in self.tests}
-        self.data = QDEGdata_D(products=[self.ref_prod, self.test_prod])
+
         if self.ref_prod == 'ISMN-Merge':
             self.ismndata = ISMNdataUSA('merra2', max_depth=0.1)
+            self.data = QDEGdata_D(products=[self.test_prod])
+        else:
+            self.data = QDEGdata_D(products=[self.ref_prod, self.test_prod])
 
         self.alpha = alpha
         self.anomaly = anomaly
@@ -191,8 +194,8 @@ class HomogTest(object):
     def scipy_fk_test(dataframe, mode='median', alpha=0.1):
         df = dataframe.rename(columns={'Q': 'data'})
         df = df.dropna()
-        sample1 = df[df['group'==0.].index]['Q'].values
-        sample2 = df[df['group'==1.].index]['Q'].values
+        sample1 = df[df['group']==0.]['data'].values
+        sample2 = df[df['group']==1.]['data'].values
 
         stats, pval = fligner(sample1, sample2, center=mode)
 
@@ -237,17 +240,17 @@ class HomogTest(object):
             except:
                 raise Exception('9: Could not import data for gpi %i' % gpi)
 
-            if self.ref_prod == 'ISMN-merge':
+            if self.ref_prod == 'ISMN-Merge':
                 print('CCI range anomaly wont work with ISMN data')
 
         else:
             try:
-                if self.ref_prod == 'ISMN-merge':
+                if self.ref_prod == 'ISMN-Merge':
                     df_time = self.data.read_gpi(gpi, start, end)
 
                     df_time = df_time / 100  # type: pd.DataFrame
 
-                    df_time['ISMN-merge'] = self.ismndata.merge_stations_around_gpi(gpi, df_time[self.test_prod])
+                    df_time['ISMN-Merge'] = self.ismndata.read_gpi(gpi, start, end)
                 else:
                     df_time = self.data.read_gpi(gpi, start, end)
                     df_time = df_time / 100
@@ -351,7 +354,7 @@ class HomogTest(object):
             except:
                 fligner_killeen = {'h': 'Error during FK testing'}
                 pass
-            self.testresults['fligner_killeen'] = fligner_killeen
+            self.testresults['scipy_fligner_killeen'] = fligner_killeen
 
         self.testresults.update({'test_status': '0: Testing successful'})
         return data, self.testresults

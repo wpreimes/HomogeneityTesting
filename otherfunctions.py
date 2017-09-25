@@ -267,4 +267,3 @@ def merge_ts(dataframe):
         # Else perform interpolation from linear regression
         merged_ts = fill_holes_lress(max_series, other_series_merged)
         return merged_ts
-

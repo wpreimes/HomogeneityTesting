@@ -16,6 +16,7 @@ from otherfunctions import merge_ts, regress
 from smecv_grid.grid import SMECV_Grid_v042
 from grid_functions import cells_for_continent
 from rsdata import root_path
+from import_satellite_data import QDEGdata_D
 
 
 class ISMNdataUSA(object):
@@ -205,7 +206,6 @@ class ISMNdataUSA(object):
         return data_group[startdate:enddate]
 
 if __name__ == '__main__':
-    from import_satellite_data import QDEGdata_D
     from datetime import datetime
     gpi = 772117
     testprod = 'CCI_41_COMBINED'
@@ -213,5 +213,7 @@ if __name__ == '__main__':
     timeframe = [datetime(1978, 10, 26), datetime(2016, 12, 31)]
     scale_data = QDEGdata_D(products=[scaleprod])
     data = ISMNdataUSA(scaleprod, 0.1)
+    data2 = QDEGdata_D(products=['merra2'])
     df = data.read_gpi(gpi, timeframe[0], timeframe[1])
-    print df
+    df2 = data2.read_gpi(gpi, timeframe[0], timeframe[1])
+    print pd.concat([df, df2],axis=1)

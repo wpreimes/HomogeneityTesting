@@ -137,14 +137,14 @@ class Results2D(object):
         return return_gpis
 
 
-def extract_test_infos(data_dict):
+def extract_test_infos(data_dict,tests):
     # type: (dict) -> dict
     status = int(data_dict['test_status'][0])
     if status not in [0, 6, 7]:
         return {'h_wk': np.nan, 'h_fk': np.nan, 'test_results': np.nan, 'test_status': status}
     else:
-        wk = data_dict['wilkoxon']['h']
-        fk = data_dict['fligner_killeen']['h']
+        wk = data_dict[tests['mean']]['h']
+        fk = data_dict[tests['var']]['h']
 
         if type(wk) is str:
             # wk test failed and contains error message

@@ -8,30 +8,7 @@ from datetime import datetime
 import numpy as np
 import scipy.stats as stats
 import pandas as pd
-
-def compare_B(B, adjust_param, tolerance = 0.05):
-    p1_B1_after = B[0,0] #add
-    p1_B2_after = B[1,0] #mult
-
-    p2_B1_after = B[0,1] #add
-    p2_B2_after = B[1,1] #mult
-
-    if adjust_param == 'both':
-        if not np.isclose(p1_B1_after, p2_B1_after, atol=tolerance) or \
-                not np.isclose(p1_B2_after, p2_B2_after, atol=tolerance):
-            return False
-        else:
-            return True
-    if adjust_param == 'add':
-        if not np.isclose(p1_B1_after, p2_B1_after, atol=tolerance):
-            return False
-        else:
-            return True
-    if adjust_param == 'mult':
-        if not np.isclose(p1_B2_after, p2_B2_after, atol=tolerance):
-            return False
-        else:
-            return True
+import matplotlib.pyplot as plt
 
 def adjustment(data_daily, B, breaktime,
                adjust_param = 'both', adjust_part='first', return_part=None):
@@ -68,9 +45,9 @@ def adjustment(data_daily, B, breaktime,
         cc = B[0, 0] / B[0, 1]  # k1/k2
         dd = B[1, 0] - cc * B[1, 1] # d1 - cc*d2
 
-
         if adjust_param == 'd':
-            adjusted_part2 = (cc * part2 + dd) / cc
+            meandiff = part1.mean() - part2.mean()
+            adjusted_part2 = part2 + meandiff
         else:
             adjusted_part2 = cc * part2 + dd
 
@@ -78,10 +55,8 @@ def adjustment(data_daily, B, breaktime,
 
     elif adjust_part == 'first':
         # Perform the linear adjustment for testdata before the breaktime
-
         # B =   | k1  k2|
         #       | d1  d2 |
-
         cc = B[0, 1] / B[0, 0]  # k2/k1
         dd = B[1, 1] - cc * B[1, 0] # d2 - cc*d1
 
@@ -109,7 +84,7 @@ def adjustment(data_daily, B, breaktime,
 
 
 
-def adjustment_params(data, breaktime):
+def adjustment_params(data, breaktime, plotfig=False):
     '''
     Model Data before/after breaktime via linear model, return Model paramters
     :param data: pd.DataFrame
@@ -147,11 +122,37 @@ def adjustment_params(data, breaktime):
         A = np.stack(( data['refdata'].values, np.ones(data['refdata'].values.size)))
         b = np.dot(np.dot(np.linalg.inv(np.dot(A, np.transpose(A))), A), l)
 
+        if plotfig != False:
+            axs = plotfig
+            xlim= 0.3
+            if i == 1:
+                when = 'before break'
+            else:
+                when = 'after break'
+            axs[i-1].scatter(testdata, np.dot(np.transpose(A),b))
+
+            x = np.linspace(0, np.sort(testdata)[-1], testdata.size)
+            abline_values = [b[0] * j + b[1] for j in x]
+
+            axs[i-1].plot((0, 1), "r--")
+            axs[i-1].plot(x, abline_values, 'b')
+            axs[i-1].set_xlim([0,xlim])
+            axs[i-1].set_ylim([b[1], 0.28])
+            axs[i-1].set_title('Model %s' % when)
+
+            textbox = 'var_test: %f \n mean_test: %f \n ' \
+                      'var_ref: %f \n mean_test: %f \n corr: %f' % (np.var(testdata), np.mean(testdata),
+                                                                np.var(refdata), np.mean(refdata),
+                                                                stats.pearsonr(testdata, refdata)[0])
+            axs[i-1].annotate(textbox, fontsize=6, xy=(0.7, 0.1), xycoords='axes fraction',
+                              bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
+
         B['b%i' %i] = b
 
         r, p = stats.pearsonr(refdata, testdata)
         rval.append(r)
         pval.append(p)
+
 
     regtest = {'R': rval, 'p': pval}
 

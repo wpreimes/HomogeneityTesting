@@ -35,14 +35,15 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
     min_data_size = 3  # Minimum number of monthly values before/after break to perform homogeneity testing # TODO: different value?
     resample_method = 'M'
     refdata_correction_for = 'iteration'  # iteration, full or timeframe
-    tests = ['wilkoxon', 'fligner_killeen']
+    tests = {'mean': 'wilkoxon', 'var': 'scipy_fligner_killeen'}
+    model_plots = False
     ##########################################
 
 
     process_csv_file = 'saved_points_%s.csv' % process_no
     test_obj = HomogTest(test_prod,
                          ref_prod,
-                         tests,
+                         tests.values(),
                          0.01,  # TODO: Choose higher alpha value eg 0.05 or 0.1
                          anomaly,
                          perform_adjustment)
@@ -50,6 +51,10 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
     if perform_adjustment:
         dataset = GriddedNcIndexedRaggedTs(path=adjusted_data_path, grid=(save_obj.pre_process_grid), mode='w')
         max_retries = 5
+        if perform_adjustment == 'always':
+            min_retries = 1
+        else:
+            min_retries = 0
     else:
         max_retries = 1
         dataset = None
@@ -61,15 +66,15 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
         grid_points = (save_obj.pre_process_grid).grid_points_for_cell(cell)[0]
 
         for iteration, gpi in enumerate(grid_points):
-            #if gpi!=358365: continue
 
+            #if gpi != 374200 : continue
             # if iteration%10 == 0:
             print 'processing gpi %i (%i of %i)' % (gpi, iteration, grid_points.size)
             try:
                 df_time = test_obj.read_gpi(gpi, start=test_obj.range[0], end=test_obj.range[1])
-                #if test_obj.ref_prod == 'ISMN-merge': #TODO: implement
-                    #df_time[test_obj.ref_prod] = test_obj.ismndata.read_gpi(gpi, start=test_obj.range[0], end=test_obj.range[1])
-                    #valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
+                # if test_obj.ref_prod == 'ISMN-merge': #TODO: implement
+                # df_time[test_obj.ref_prod] = test_obj.ismndata.read_gpi(gpi, start=test_obj.range[0], end=test_obj.range[1])
+                # valid_insitu_gpis = test_obj.ismndata.gpis_with_netsta
             except:
                 continue
 
@@ -93,34 +98,39 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                 # the (insufficiently) corrected test data and repeat adjustment (< max_retries times)
                 original_values = df_time[timeframe[0]:timeframe[1]]
                 original_results = None
-                while retries < max_retries and (not testresult or
-                                                     not test_obj.check_testresult(testresult)[1]):
+                while retries < max_retries and \
+                        (not testresult or not test_obj.check_testresult(testresult)[1] or retries <= min_retries):
 
                     if backward_extended_timeframes:  # Cut data to timeframe
                         while timeframe[1] in homogeneous_breaktimes:
-                            timeframe[1] = times_obj.get_adjacent(gpi, timeframe, -1)[1]  # Use end of previous timeframe
+                            timeframe[1] = times_obj.get_adjacent(gpi, timeframe, -1)[
+                                1]  # Use end of previous timeframe
 
-                    data_daily = df_time[timeframe[0]:timeframe[1]] # change with adjustment iterations
-                        # keep this for adjustment #TODO: Allow Extended Timeframes?
+                    data_daily = df_time[timeframe[0]:timeframe[1]]  # change with adjustment iterations
+                    # keep this for adjustment #TODO: Allow Extended Timeframes?
                     try:  # Homogeneity Testing
                         data_daily = data_daily.dropna()  # TODO: activate?
                         # resample to monthly value
                         data = temp_resample(data_daily, resample_method, min_data_for_temp_resampling).dropna()
-                        # Correct bias in reference data
-                        if refdata_correction_for == 'iteration' or (refdata_correction_for == 'timeframe' and retries == 0):
-                            data_daily['refdata'] = test_obj.ref_data_correction(data_daily[['testdata', 'refdata']])
-                            data['refdata'] = test_obj.ref_data_correction(data[['testdata', 'refdata']])
+
                         # Checks if there is data left and calculates spearman correlation
                         corr, pval = test_obj.check_corr(data)
                         data, _, _ = test_obj.group_by_breaktime(data,
                                                                  breaktime,
                                                                  min_data_size=min_data_size,
                                                                  ignore_exception=False)
+                        # Correct bias in reference data
+                        if refdata_correction_for == 'iteration' or retries == 0:
+                            #print('Adjusting refdata')
+                            #data_daily[:breaktime]['refdata'] = test_obj.ref_data_correction(data_daily[['testdata', 'refdata']][:breaktime])
+                            data['refdata'] = test_obj.ref_data_correction(data[['testdata', 'refdata']])
 
                         # Calculate difference TimeSeries
                         data['Q'] = data['testdata'] - data['refdata']
                         # Run Tests
                         _, testresult = test_obj.run_tests(data=data)
+                        print breaktime
+                        print testresult
                         if not original_results:
                             original_results = testresult
 
@@ -131,12 +141,20 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                     break_found_by, check_result = test_obj.check_testresult(testresult)
 
                     try:
+                        if model_plots:
+                            f, axs = plt.subplots(2)
+                            axs = axs.tolist()
+                            f.suptitle('iteration: %i' %retries, fontsize=20)
+                            f.subplots_adjust(hspace=.5)
+                        else:
+                            axs = False
                         B, corr = adjustment_params(data=data,  # todo: or monthly??
-                                                    breaktime=breaktime)
+                                                    breaktime=breaktime,
+                                                    plotfig=axs)
 
                     except Exception as e:
                         adjresult = {'adj_status': str(e)}
-                        print '%i: Adjustment failed due to exception: %s' % (gpi, e)
+                        print '%i: Adjustment parameter calculation failed due to exception: %s' % (gpi, e)
                         break
 
                     if retries == 0:
@@ -146,7 +164,7 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         B_compare['after'] = {'k1': B['b1'][0], 'd1': B['b1'][1],
                                               'k2': B['b2'][0], 'd2': B['b2'][1]}
 
-                    if check_result == True:  # no break was found
+                    if check_result == True and perform_adjustment!='always':  # no break was found
                         homogeneous_breaktimes.append(breaktime)
 
                         if retries == 0:
@@ -170,7 +188,7 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         try:  # Time Series Adjustment
                             # TODO: point dependent adjustment parameter?
                             if retries == 0 and testresult['wilkoxon']['h'] == 1:
-                                adjust_param = 'd'
+                                adjust_param = 'both'  # TODO: 'd'?
                             else:
                                 adjust_param = 'both'
                             adjusted, adjresult = adjustment(data_daily=data_daily,
@@ -192,7 +210,10 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         break
 
                 # Merge test results and adjustresults for gpi and add to save object
-
+                if model_plots and retries > 0:
+                    plt.show()
+                else:
+                    plt.close('all')
                 if testresult['test_status'][0] == '0' and \
                         not test_obj.check_testresult(testresult)[1]:
                     print ('%s: Could not remove break after %i retries :(' % (str(breaktime.date()), max_retries))
@@ -200,7 +221,7 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                         # If adjustment did not improve results
                         df_time[timeframe[0]:timeframe[1]] = original_values
 
-                testresult = extract_test_infos(testresult)
+                testresult = extract_test_infos(testresult,tests)
                 if not adjresult:
                     adjresult = {'adj_status': '9: Not adjusted'}
 
@@ -318,12 +339,13 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
 if __name__ == '__main__':
     # Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
     # Testproduct of form cci_*version*_*product*
+
     start('CCI_41_COMBINED',
           'merra2',
           r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output',
-          cells='global',
+          cells=[2244],
           skip_times=None,
           anomaly=False,
           backward_extended_timeframes=False,
-          perform_adjustment=True,
-          parallel_processes=8)
+          perform_adjustment='breaks', # always, breaks or False
+          parallel_processes=1)

@@ -7,12 +7,12 @@ Created on Wed Mar 22 17:06:28 2017
 import sys
 from rsdata import root_path
 import os
-
+import glob
 import numpy as np
 
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
-from cci_timeframes import CCITimes
+import math
 import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 from datetime import datetime
@@ -22,7 +22,7 @@ from smecv_grid.grid import SMECV_Grid_v042
 import xarray as xr
 from interface import HomogTest
 from otherfunctions import temp_resample
-
+from cci_timeframes import CCITimes
 
 def valid_months_plot(workdir, testproduct, refproduct, resample_method, min_monthly_values):
 
@@ -180,86 +180,75 @@ def inhomo_plot_with_stats(workdir, filename):
     return {'tested_gps': all_tested, 'wk_of_tested' : wk_tested, 'fk_of_tested': fk_tested,
             'both_of_tested': both_tested}
 
-'''
-def compare_RTM_RTG(workdir, model_prod):
 
-    times = {'ISMN-merge': {'starttimes': [], 'endtimes': [], 'breaktimes': []},
-             model_prod: {'starttimes': [], 'endtimes': [], 'breaktimes': []}}
-    files = {'ISMN-merge': [], model_prod: []}
+def compare_RTM_RTG(RTM_dir, RTG_dir, cci_prod, model_prod,
+                    filename_pattern='HomogeneityTestResult_%s_image.nc'):
 
-    for ref_data in ['ISMN-merge', model_prod]:
-        fileslist = glob.glob(os.path.join(workdir, "DF_Points_%s*.csv" % ref_data))
-        files[ref_data] = fileslist
-        for filename in fileslist:
-            # TODO: Trollsift Parser
-            filename = filename.replace(workdir, '')
-            filename = filename.replace('.', '_')
-            splitname = filename.split('_')
-            times[ref_data]['starttimes'].append(splitname[3])
-            times[ref_data]['endtimes'].append(splitname[5])
-            times[ref_data]['breaktimes'].append(splitname[4])
-     
-    # if (times['ISMN_merge']['starttimes']==times[model_prod]['starttimes']) and \
-    #    (times['ISMN_merge']['endtimes']==times[model_prod]['endtimes']) and \
-    #    (times['ISMN_merge']['breaktimes']==times[model_prod]['breaktimes']):
-    
+    times_obj=CCITimes(cci_prod)
+    times = times_obj.get_times(as_datetime=False)
 
-    cols = int(math.ceil(float(len(files['ISMN-merge']))))
+    cols = times['breaktimes'].size
     fig, axs = plt.subplots(1, cols, figsize=(cols * 3, 5), facecolor='w', edgecolor='k', sharey=False)
 
     fig.suptitle('Comparison Break Detection RTM,RTG (USA)', fontsize=20, fontweight='bold')
     fig.subplots_adjust(top=0.85, wspace=0.2, hspace=0.1)
     axs = axs.ravel()
     comp_meas = []
-    for i, (ismn_file, model_file) in enumerate(zip(files['ISMN-merge'], files[model_prod])):
+
+    for i, breaktime in enumerate(times['breaktimes']):
+        filename =  filename_pattern % breaktime
+        ncfile_rtm = xr.open_dataset(os.path.join(RTM_dir, filename))
+        ncfile_rtg = xr.open_dataset(os.path.join(RTG_dir, filename))
+
+        DF_Points_rtg_from_file = ncfile_rtg.to_dataframe().reset_index(inplace=False) \
+                                                           .set_index(['location_id'])
+
+        DF_Points_ismn = DF_Points_rtg_from_file.loc[DF_Points_rtg_from_file.index.dropna()]\
+                                                         .rename(columns={'test_results': 'RTG'})
+        DF_Points_ismn = DF_Points_ismn[np.isfinite(DF_Points_ismn['RTG'])][['RTG','lon', 'lat']]
+
+        DF_Points_rtm_from_file = ncfile_rtm.to_dataframe().reset_index(inplace=False) \
+                                                           .set_index(['location_id'])
+
+        DF_Points_model = DF_Points_rtm_from_file.loc[DF_Points_rtm_from_file.index.dropna()]\
+                                                         .rename(columns={'test_results': 'RTM'})
+        DF_Points_model = DF_Points_model[np.isfinite(DF_Points_model['RTM'])][['RTM']]
+
+        DF_Points_merged = pd.concat([DF_Points_model, DF_Points_ismn], axis=1)\
+                                    .dropna(how='any')
+
+        DF_Points_merged['diff'] = np.nan
         index = 0
-        if times['ISMN-merge']['breaktimes'][i] == times[model_prod]['breaktimes'][i]:
-            DF_Points_ismn = pd.read_csv(os.path.join(ismn_file), index_col=0)
-            DF_Points_model = pd.read_csv(os.path.join(model_file), index_col=0)
+        if not DF_Points_merged.empty:
+            for gpi in DF_Points_merged.index.values:
+                if DF_Points_merged['RTM'].loc[gpi] == np.nan or DF_Points_merged['RTG'].loc[gpi] == np.nan:
+                    continue
+                elif DF_Points_merged['RTM'].loc[gpi] == DF_Points_merged['RTG'].loc[gpi]:
+                    DF_Points_merged = DF_Points_merged.set_value(gpi, 'diff', 0)
+                elif DF_Points_merged['RTM'].loc[gpi] != 4. and DF_Points_merged['RTG'].loc[gpi] == 4.:
+                    DF_Points_merged = DF_Points_merged.set_value(gpi, 'diff', 1)
+                elif DF_Points_merged['RTM'].loc[gpi] == 4. and DF_Points_merged['RTG'].loc[gpi] != 4.:
+                    DF_Points_merged = DF_Points_merged.set_value(gpi, 'diff', -1)
+                index += 1
 
-            if (DF_Points_ismn.index == DF_Points_model.index).all():
-                DF_Points_merged = DF_Points_model[['lat', 'lon', 'test_results']].rename(
-                    columns={'test_results': model_prod})
-                DF_Points_merged['ISMN-merge'] = DF_Points_ismn['test_results']
-                DF_Points_merged = DF_Points_merged.dropna(how='any')
-                DF_Points_merged['diff'] = np.nan
-                if not DF_Points_merged.empty:
-                    for gpi in DF_Points_merged.index.values:
-                        if DF_Points_merged[model_prod].loc[gpi] == np.nan or DF_Points_merged['ISMN-merge'].loc[
-                            gpi] == np.nan:
-                            continue
-                        elif DF_Points_merged[model_prod].loc[gpi] == DF_Points_merged['ISMN-merge'].loc[gpi]:
-                            DF_Points_merged['diff'].loc[gpi] = 0
-                        elif DF_Points_merged[model_prod].loc[gpi] != 4. and DF_Points_merged['ISMN-merge'].loc[
-                            gpi] == 4.:
-                            DF_Points_merged['diff'].loc[gpi] = 1
-                        elif DF_Points_merged[model_prod].loc[gpi] == 4. and DF_Points_merged['ISMN-merge'].loc[
-                            gpi] != 4.:
-                            DF_Points_merged['diff'].loc[gpi] = -1
-                        index += 1
+            data = DF_Points_merged['diff'].values
+            n, bins, patches = axs[i].hist(data, bins=3, range=(-1.5, 1.5), align='mid')
+            cm = plt.cm.get_cmap('hsv')
+            bin_centers = 0.5 * (bins[:-1] + bins[1:])
+            col = bin_centers - min(bin_centers)
+            col /= max(col)
+            for c, p in zip(col, patches):
+                plt.setp(p, 'facecolor', cm(c))
 
-                    data = DF_Points_merged['diff'].values
-                    n, bins, patches = axs[i].hist(data, bins=3, range=(-1.5, 1.5), align='mid')
-                    cm = plt.cm.get_cmap('hsv')
-                    bin_centers = 0.5 * (bins[:-1] + bins[1:])
-                    col = bin_centers - min(bin_centers)
-                    col /= max(col)
-                    for c, p in zip(col, patches):
-                        plt.setp(p, 'facecolor', cm(c))
         comp_meas.append(index)
         axs[i].set_xlim([-2, 2])
         axs[i].set_ylim([0, 200])
         axs[i].set_xticks(np.arange(-2, 2, 1.0))
-        axs[i].set_title('Break: ' + str(times[model_prod]['breaktimes'][i]))
-    
-    #fig.text(0.5, 0.03, 'Comparison Class', ha='center', va='center',fontsize=12)
-    #fig.text(0.09, 0.5, 'Number of Tests', ha='center', va='center', rotation='vertical',fontsize=12)
-    #fig.text(0.58, -0.04, '0=No difference between RTM and RTG \n 1=RTM found Break, RTG not \n -1=RTG found Break, RTM not', 
-    #         style='italic',bbox={'facecolor':'grey', 'alpha':0.5, 'pad':10})     
-    
-    fig.savefig(os.path.join(workdir, 'RTM_vs_RTG'))
+        axs[i].set_title('Break: %s' % breaktime )
+
+    fig.savefig(os.path.join(RTG_dir, 'RTM_vs_RTG'))
     print('Number of points to compare:' + str(comp_meas))
-'''
+
 
 
 def show_processed_gpis(workdir,plottype, filename):
@@ -404,9 +393,9 @@ def longest_homog_period_plots(workdir, startyear_plot=True, endyear_plot=True):
 
     cmap = plt.cm.jet
 
-    levels = [8, 11.5, 15.5, 21]
+    levels = [8, 11.5, 15.5, 21, 30]
     cmaplist = [(0.5, 0, 0, 1), (0.7, 0, 0, 1), (1, 0.2, 0.2, 1), (1, 0.2, 0.2, 1),
-                (0, 0.7, 0.7, 1), (0, 0.6, 0.7, 1), (0, 0.6, 0.7, 1), (0, 0.3, 1, 1),
+                (0, 0.7, 0.7, 1), (0, 0.6, 0.7, 1), (0, 0.6, 0.7, 1), (0, 0.3, 1, 1),(0, 0.3, 1, 1),
                 (0, 0, 0.5, 1), (0, 0, 0.5, 1), (0, 0, 0.5, 1)]
 
     cmap = cmap.from_list('LongestPeriodCMap', cmaplist, cmap.N)
@@ -483,9 +472,12 @@ if __name__ == '__main__':
     # df = pd_from_2Dnetcdf(r"H:\HomogeneityTesting_data\output\CCI33\HomogeneityTest_merra2_1991-08-01.nc", return_only_tested=False)
     # extreme_break(r'H:\HomogeneityTesting_data\output\CCI22EGU','gldas_v2','cci_22')
     #show_tested_gpis(r"H:\HomogeneityTesting_data\output\v5","HomogeneityTestResult_2007-01-01_image.nc")
-    #longest_homog_period_plots(r"H:\HomogeneityTesting_data\output\v5")
+    longest_homog_period_plots(r"D:\users\wpreimes\datasets\HomogeneityTesting_data\output\CCI41_ADJUST_global")
     # show_processed_gpis(r"H:\HomogeneityTesting_data\output\CCI33", 'test',"HomogeneityTest_merra2_1991-08-01.nc" )
     #inhomo_plot_with_stats(r'H:\HomogeneityTesting_data\output\v5',"HomogeneityTestResult_2007-01-01_image.nc")
-    # compare_RTM_RTG(r'H:\HomogeneityTesting_data\output\CCI31EGU','merra2')
+    #compare_RTM_RTG(r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output\CCI41_noAdjust',
+    #                r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output\CCI41_ISMN',
+    #                'CCI_41_COMBINED',
+    #                'merra2')
     # show_tested_gpis(r"H:\HomogeneityTesting_data\output\v15","HomogeneityTest_merra2_2011-10-01")
-    valid_months_plot(r'H:\HomogeneityTesting_data\output\CCI_available_data_plots', 'CCI_33_COMBINED','merra2', 'M', 0.33)
+    # valid_months_plot(r'H:\HomogeneityTesting_data\output\CCI_available_data_plots', 'CCI_33_COMBINED','merra2', 'M', 0.33)
