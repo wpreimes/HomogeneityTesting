@@ -12,45 +12,49 @@ import xarray as xr
 from pynetcf.point_data import GriddedPointData
 import os
 import re
-import shutil
 from smecv_grid.grid import SMECV_Grid_v042
 
 
-class save_Log(object):
-    def __init__(self, workfolder, test_prod, ref_prod, anomaly, cells, backward_extended_timeframes):
+class LogFile(object):
+    def __init__(self, workfolder):
         # type: (str, str, str, str, list) -> None
         self.workfolder = workfolder
+        self.log_path = os.path.join(self.workfolder, 'log.txt')
 
-        with open(os.path.join(workfolder, 'log.txt'), 'w') as f:
+    def init_log(self, initial_parameters):
+        # type: (dict) -> str
+        with open(self.log_path, 'w') as f:
             f.write('Log file for HomogeneityTesting \n')
             f.write('=====================================\n')
-            f.write('Test Product: %s \n' % test_prod)
-            f.write('Reference Product: %s \n' % ref_prod)
-            f.write('Anomaly data: %s \n' % str(anomaly))
-            f.write('Input Cells: %s \n' % cells)
-            f.write('Backward Extended Timeframes: %s \n' % str(backward_extended_timeframes))
+            for name, val in initial_parameters.iteritems():
+                f.write('%s: %s \n' % (name, str(val)))
             f.write('=====================================\n')
             f.write('\n')
+        return self.log_path
 
     def add_line(self, string):
         # type: (str) -> None
-        # Initialize and add line to log file for current process
-        with open(os.path.join(self.workfolder, 'log.txt'), 'a') as f:
+        with open(self.log_path, 'a') as f:
             f.write(string + '\n')
 
-
-class load_Log(object):
-    def __init__(self, workfolder):
-        self.workfolder = workfolder
-
     def get_products(self):
-        with open(os.path.join(self.workfolder, 'log.txt'), mode='r') as f:
+        '''
+        Reads the name of the reference product and the test product from log file
+        :return: str, str
+        '''
+        test_prod, ref_prod = None, None
+        with open(self.log_path, mode='r') as f:
             lines = [line.rstrip('\n') for line in f]
 
-        test_prod = lines[2].split(' ')[2]
-        ref_prod = lines[3].split(' ')[2]
+        for line in lines:
+            if 'Test Product' in line:
+                test_prod = line.split(':')[1].strip()
+            elif 'Reference Product' in line:
+                ref_prod = line.split(':')[1].strip()
+            else:
+                raise Exception('cannot find reference product or test product in log file')
 
-        return {'test_prod': test_prod, 'ref_prod': ref_prod}
+        return test_prod, ref_prod
 
 
 class Results2D(object):

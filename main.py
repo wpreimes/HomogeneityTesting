@@ -11,10 +11,10 @@ import os
 from datetime import datetime
 from multiprocessing import Process, Queue
 from pynetcf.time_series import GriddedNcIndexedRaggedTs
-from otherfunctions import temp_resample, csv_read_write, join_files, split, create_workfolder
+from otherfunctions import csv_read_write, join_files, split, create_workfolder
 from interface import BreakTestBase
 from cci_timeframes import CCITimes
-from save_data import Results2D, extract_adjust_infos, extract_test_infos, save_Log, GlobalResults
+from save_data import Results2D, extract_adjust_infos, extract_test_infos, LogFile, GlobalResults
 from grid_functions import cells_for_continent
 from adjustment import adjustment, adjustment_params
 from otherplots import show_processed_gpis, inhomo_plot_with_stats, longest_homog_period_plots
@@ -111,7 +111,7 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                     try:  # Homogeneity Testing
                         data_daily = data_daily.dropna()  # TODO: activate?
                         # resample to monthly value
-                        data = temp_resample(data_daily, resample_method, min_data_for_temp_resampling).dropna()
+                        data = test_obj.temp_resample(data_daily, resample_method, min_data_for_temp_resampling).dropna()
 
                         # Checks if there is data left and calculates spearman correlation
                         corr, pval = test_obj.check_corr(data)
@@ -172,21 +172,10 @@ def process_for_cells(q, workfolder, save_obj, times_obj, cells, log_file, test_
                             print '%s: Break removed after %i retries' % (str(breaktime.date()), retries)
                             break
                     elif perform_adjustment:  # break was found, attempt adjustment
-                        '''
-                        # Adjustment 
-                        1) Perform adjustment on the dataframe
-                            ---Use equal amouunt of data after the break than before and vice versa (never more than to next/previous break point +margin
-                            ----Use maximal amount of adjusted data (from breaktime until end of dataset)
-                            -- Adjust model param 1, model param 2 or both
-                        2) replacce data in df_time with adjusted data
-                        3) Iterate over all breaktimes
-                        4) Save df time to file
-                        5) Iterate over all gpis
-                        '''
                         try:  # Time Series Adjustment
                             # TODO: point dependent adjustment parameter?
                             if retries == 0 and testresult['wilkoxon']['h'] == 1:
-                                adjust_param = 'both'  # TODO: 'd'?
+                                adjust_param = 'd'
                             else:
                                 adjust_param = 'both'
                             adjusted, adjresult = adjustment(data_daily=data_daily,
@@ -276,7 +265,12 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
 
     workfolder = create_workfolder(path)
 
-    log_file = save_Log(workfolder, test_prod, ref_prod, anomaly, cells, backward_extended_timeframes)
+    log_file = LogFile(workfolder)
+    log_path = log_file.init_log({'Test Product': test_prod,
+                                  'Reference Product': ref_prod,
+                                  'Anomaly Data': anomaly,
+                                  'Processed Cells' :cells,
+                                  'Backward Extended TimeFrames':backward_extended_timeframes})
 
     if cells == 'global':
         cells = grid.get_cells()
@@ -329,13 +323,6 @@ def start(test_prod, ref_prod, path, cells='global', skip_times=None, anomaly=No
         for i, image_file in enumerate(image_files_names, start=1):
             log_file.add_line('  Adjusment coverage Plot %i : %s' % (i, str(stats)))
             meta = show_processed_gpis(workfolder, 'adjustment', image_file)
-    '''
-    log_file.add_line('=====================================')
-    if perform_adjustment:
-        log_file.add_line('%s: Start TS Adjustment' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        pass
-        #Do TS adjutement and save resutls to path
-    '''
 
 
 if __name__ == '__main__':
@@ -345,9 +332,9 @@ if __name__ == '__main__':
     start('CCI_41_COMBINED',
           'merra2',
           r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output',
-          cells=[813],
+          cells='Australia',
           skip_times=None,
           anomaly=False,
           backward_extended_timeframes=False,
           perform_adjustment='breaks', # always, breaks or False
-          parallel_processes=1)
+          parallel_processes=8)

@@ -120,27 +120,6 @@ def regress(data):
     return pd.Series(index=dataframe.index, data=np.squeeze(np.asarray(out))), R, pval, ress
 
 
-def temp_resample(df, how='M', threshold=0.33):
-    '''
-    Resample a dataframe to monthly values, if the number of valid values (not nans) in a month
-    is smaller than the defined threshold, the monthly resample will be NaN
-
-    :param how: str
-        Time frame for temporal resampling, M = monthly, 10D = 10daily,...
-    :param threshold: float
-        % of valid days (not nan) in timeframe defined in 'how'
-    :return: pd.DataFrame
-        The monthly resampled Data
-    '''
-    concat = []
-    for column in df.columns.values:
-        resampled = df[[column]].groupby(pd.TimeGrouper(how))\
-                                .filter(lambda g: g.count() > round(g.count()*threshold))\
-                                .resample(how).mean()
-        concat.append(resampled)
-
-    return pd.concat(concat, axis = 1)
-
 def datetime2matlabdn(dt):
     ord = dt.toordinal()
     mdn = dt + timedelta(days=366)

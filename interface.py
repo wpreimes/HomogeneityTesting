@@ -16,41 +16,61 @@ from datetime import datetime
 from scipy.stats import fligner, levene
 from cci_timeframes import CCITimes
 from otherfunctions import regress, datetime2matlabdn
-from import_satellite_data import QDEGdata_M, QDEGdata_D
+from import_satellite_data import QDEGdata_D
 from import_ismn_data import ISMNdataUSA
 
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
+
 class BreakTestData(object):
-    def __init__(self, test_prod, ref_prod, anomaly, adjusted_ts_path=None):
+    '''
+    Class containing properties of data used for break detection
+    '''
+    def __init__(self, test_prod, ref_prod, anomaly):
         # type: (str,str,Union(bool,str)) -> None
-
-
+        '''
+        :param test_prod: str
+            Name of the product as in QDEGdata to test for breaks against the reference
+            e.g for CCI: CCI_*version*_*PRODUCT*
+        :param ref_prod: str
+            Name of the reference product as in QDEGdata
+            e.g merra2
+        :param anomaly: bool
+            Set True to use anomaly data for testing
+        '''
         self.ref_prod = ref_prod
         self.test_prod = test_prod
-
         self.range = CCITimes(self.test_prod, ignore_position=True).get_times(None, as_datetime=False)['ranges']
-
         self.anomaly = anomaly
-
         if self.ref_prod == 'ISMN-Merge':
             self.ismndata = ISMNdataUSA('merra2', max_depth=0.1)
             self.data = QDEGdata_D(products=[self.test_prod])
         else:
             self.data = QDEGdata_D(products=[self.ref_prod, self.test_prod])
 
-        if adjusted_ts_path: #todo: move to adjustment class
-            self.adjusted_ts_path = adjusted_ts_path
 
+    def read_gpi(self, gpi, start=None, end=None):
+        '''
+        Read time series for the class products from start date to end date
 
-
-    def read_gpi(self, gpi, start, end):
-        # type: (int) -> pd.DataFrame
-
+        :param gpi: int
+            index of ground point for which data is read
+        :param start: string (%Y-%m-%d)
+            Start date of the time series to read
+        :param end: string (%Y-%m-%d)
+            End date of the time series to read
+        :return: pd.DataFrame
+            DataFrame of SM values of the test product and ref product
+        '''
 
         # Import the test data and reference datasets for the active ground point
+        if not start:
+            start = self.range[0]
+        if not end:
+            end = self.range[1]
+
         if self.anomaly == 'ccirange':
-            #Calculate the anomaly over the whole CCI version time frame (1978-present)
+            # Calculate the anomaly over the whole CCI version time frame (1978-present)
             range = [time.strftime('%Y-%m-%d') for time in self.range]
             try:
                 df_time = (self.data).read_gpi(gpi, range[0], range[1])
@@ -87,32 +107,108 @@ class BreakTestData(object):
         # Drop days where either dataset is missing
         return df_time
 
+    def group_by_breaktime(self, df_time, breaktime, min_data_size, ignore_exception=False):
+        '''
+        Divide Time Series into 2 subgroups according to breaktime (before/after)
+
+        :param df_time: pd.DataFrame
+        :param breaktime: datetime
+        :return: pd.DataFrame
+        '''
+        df_time['group'] = np.nan
+
+        i1 = df_time.loc[:breaktime]
+        i2 = df_time.loc[breaktime + pd.DateOffset(1):]
+
+        df_time.loc[i1.index, 'group'] = 0
+        df_time.loc[i2.index, 'group'] = 1
+        ni1 = len(i1.index)
+        ni2 = len(i2.index)
+
+        # Check if group data sizes are above selected minimum size
+        if not ignore_exception:
+            if ni1 < min_data_size or ni2 < min_data_size:
+                raise Exception('4: Minimum Dataseries Length not reached. Size is %i and/or %i !> %i'
+                                % (ni1, ni2, min_data_size))
+
+        return df_time, ni1, ni2
+
+    def temp_resample(self, df, how='M', threshold=0.33):
+        '''
+        Resample a dataframe to monthly values, if the number of valid values (not nans) in a month
+        is smaller than the defined threshold, the monthly resample will be NaN
+
+        :param how: str
+            Time frame for temporal resampling, M = monthly, 10D = 10daily,...
+        :param threshold: float
+            % of valid days (not nan) in timeframe defined in 'how'
+        :return: pd.DataFrame
+            The monthly resampled Data
+        '''
+        concat = []
+        for column in df.columns.values:
+            resampled = df[[column]].groupby(pd.TimeGrouper(how)) \
+                .filter(lambda g: g.count() > round(g.count() * threshold)) \
+                .resample(how).mean()
+            concat.append(resampled)
+
+        return pd.concat(concat, axis=1)
+
+    def ref_data_correction(self, df_time):
+        '''
+        Scale the column "refdata" in the given dataframe to values of "testdata" in the dataframe
+
+        :param df_time: pd.DataFrame
+            SM values, columns must be named 'refdata' and 'testdata'
+        :return: pd.DataFrame
+            DataFrame with bias corrected reference data
+        '''
+        df_time['bias_corr_refdata'], rxy, pval, ress = regress(df_time)
+
+        if any(np.isnan(ress)):
+            raise Exception('5: Negative or NaN correlation after refdata correction')
+
+        return df_time['bias_corr_refdata']
+
 
 class BreakTestBase(BreakTestData):
-    def __init__(self,test_prod, ref_prod, tests, alpha, anomaly, adjusted_ts_path=None):
+    '''
+    Class containing functions and properties for relative homogeneity testing
+    '''
+    def __init__(self, test_prod, ref_prod, tests, alpha, anomaly):
         # type: (str,str,list,float,Union(bool,str)) -> None
-
-        BreakTestData.__init__(self, test_prod, ref_prod, anomaly, adjusted_ts_path=None)
-
+        '''
+        :param test_prod: str
+            as in BreakTestData
+        :param ref_prod: str
+            as in BreakTestData
+        :param tests: list
+            list of names of the tests to run
+        :param alpha: float
+            significance level for all tests
+        :param anomaly: str
+            as in BreakTestData
+        '''
+        BreakTestData.__init__(self, test_prod, ref_prod, anomaly)
         self.tests = tests
-        self.testresults = {test:None for test in self.tests}
+        self.testresults = {test: None for test in self.tests}
         self.alpha = alpha
-
 
     def get_testresults(self):
         return self.testresults
 
-
     def check_testresult(self, testresult):
         '''
         Checks if all tests are negative (no break)
+
         :param testresult: dict
+            test results as returned by run_tests
         :return: bool
         '''
         if all(h == 0 for h in [testresult[test]['h'] for test in self.tests]):
             return None, True
         else:
-            break_found_by=[]
+            break_found_by = []
             for test in self.tests:
                 if testresult[test]['h'] == 1:
                     break_found_by.append(test)
@@ -127,39 +223,38 @@ class BreakTestBase(BreakTestData):
             # Break was removed --> better
             return True
         elif not ref_is_homog and not res_is_homog:
-            # Both found break
+            # Both found break, use priority to decide
             # compare tests
-            if Counter(ref_found_by) == Counter(res_found_by): # Same tests found break
-                return False # --> worse
+            if Counter(ref_found_by) == Counter(res_found_by):  # Same tests found break
+                return False  # --> worse
             elif priority:
                 for p in priority:
                     if (p in ref_found_by) and (p not in res_found_by):
-                        return True #--> Priority was removed
+                        return True  # --> Priority was removed
                     else:
-                        continue # Move to next Priority
-                return False # Priority was not removed
+                        continue  # Move to next Priority
+                return False  # Priority was not removed
             else:
                 return False
         else:
             return True
-
 
     @staticmethod
     def wk_test(dataframe, alternative='two-sided', alpha=0.01):
         # type: (pd.DataFrame, str) -> (float,dict)
 
         p_wk = stats.mannwhitneyu(dataframe['Q'].loc[dataframe['group'] == 0],
-                                        dataframe['Q'].loc[dataframe['group'] == 1],
-                                        alternative=alternative)[1]
+                                  dataframe['Q'].loc[dataframe['group'] == 1],
+                                  alternative=alternative)[1]
         stats_wk = stats.ranksums(dataframe['Q'].loc[dataframe['group'] == 0],
-                                  dataframe['Q'].loc[dataframe['group'] == 1])[0] #type: dict
+                                  dataframe['Q'].loc[dataframe['group'] == 1])[0]  # type: dict
 
         if p_wk < alpha:
             h = 1
         else:
             h = 0
 
-        return h, {'zval':stats_wk, 'pval': p_wk}
+        return h, {'zval': stats_wk, 'pval': p_wk}
 
     @staticmethod
     def fk_test(dataframe, mode='median', alpha=0.01):
@@ -240,8 +335,8 @@ class BreakTestBase(BreakTestData):
     def scipy_fk_test(dataframe, mode='median', alpha=0.1):
         df = dataframe.rename(columns={'Q': 'data'})
         df = df.dropna()
-        sample1 = df[df['group']==0.]['data'].values
-        sample2 = df[df['group']==1.]['data'].values
+        sample1 = df[df['group'] == 0.]['data'].values
+        sample2 = df[df['group'] == 1.]['data'].values
 
         stats, pval = fligner(sample1, sample2, center=mode)
 
@@ -257,8 +352,8 @@ class BreakTestBase(BreakTestData):
     def lv_test(dataframe, mode='median', alpha=0.1):
         df = dataframe.rename(columns={'Q': 'data'})
         df = df.dropna()
-        sample1 = df[df['group'==0.].index]['Q'].values
-        sample2 = df[df['group'==1.].index]['Q'].values
+        sample1 = df[df['group' == 0.].index]['Q'].values
+        sample2 = df[df['group' == 1.].index]['Q'].values
 
         stats, pval = levene(sample1, sample2, center=mode)
 
@@ -269,7 +364,6 @@ class BreakTestBase(BreakTestData):
         else:
             h = 0
         return h, stats_lv
-
 
     def check_corr(self, df_time):
         # Check if any data is left for testdata and reference data
@@ -284,44 +378,11 @@ class BreakTestBase(BreakTestData):
         corr, pval = stats.spearmanr(df_time['testdata'], df_time['refdata'], nan_policy='omit')
 
         # Check the rank correlation so that correlation is positive and significant
-        if not (corr > 0 and pval < 0.01): #TODO: stricter thresholds?
+        if not (corr > 0 and pval < 0.01):  # TODO: stricter thresholds?
             raise Exception('3: Spearman correlation failed with correlation %f \ '
                             '(must be >0)and pval %f (must be <0.01)' % (corr, pval))
 
         return corr, pval
-
-    def group_by_breaktime(self, df_time, breaktime, min_data_size, ignore_exception=False):
-        '''
-        Divide Time Series into 2 subgroups according to breaktime (before/after)
-        :param df_time: pd.DataFrame
-        :param breaktime: datetime
-        :return: pd.DataFrame
-        '''
-        df_time['group'] = np.nan
-
-        i1 = df_time.loc[:breaktime]
-        i2 = df_time.loc[breaktime + pd.DateOffset(1):]
-
-        df_time.loc[i1.index, 'group'] = 0
-        df_time.loc[i2.index, 'group'] = 1
-        ni1 = len(i1.index)
-        ni2 = len(i2.index)
-
-        # Check if group data sizes are above selected minimum size
-        if not ignore_exception:
-            if ni1 < min_data_size or ni2 < min_data_size:
-                raise Exception('4: Minimum Dataseries Length not reached. Size is %i and/or %i !> %i'
-                                % (ni1, ni2, min_data_size))
-
-        return df_time, ni1, ni2
-
-    def ref_data_correction(self, df_time):
-        df_time['bias_corr_refdata'], rxy, pval, ress = regress(df_time)
-
-        if any(np.isnan(ress)):
-            raise Exception('5: Negative or NaN correlation after refdata correction')
-
-        return df_time['bias_corr_refdata']
 
     def run_tests(self, data):
         # type: (pd.DataFrame, list) -> (pd.DataFrame, dict)
