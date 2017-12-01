@@ -21,7 +21,6 @@ from save_data import LogFile
 from smecv_grid.grid import SMECV_Grid_v042
 import xarray as xr
 from interface import BreakTestData
-from otherfunctions import temp_resample
 from cci_timeframes import CCITimes
 
 
@@ -67,7 +66,7 @@ def valid_months_plot(workdir, testproduct, refproduct, resample_method, min_mon
                 end = datetime.strptime(end, '%Y-%m-%d')
 
                 df_subtime = df_time[['testdata']][start:end].dropna()
-                df_resample = temp_resample(df_subtime, resample_method, min_monthly_values)
+                df_resample = test_obj.temp_resample(df_subtime, resample_method, min_monthly_values)
                 df_group, len_bef, len_aft = \
                     test_obj.group_by_breaktime(df_resample, breaktime, 3, ignore_exception=True)
 
@@ -170,7 +169,7 @@ def inhomo_plot_with_stats(workdir, filename):
                  bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
     plotfile_name = 'HomogeneityTest_%s_%s' % (ref_prod, breaktime_str)
-    plt.savefig(workdir + '\\' + plotfile_name + '.png', dpi=f.dpi)
+    plt.savefig(os.path.join(workdir, plotfile_name + '.png'), dpi=f.dpi)
 
     return {'tested_gps': all_tested, 'wk_of_tested': wk_tested, 'fk_of_tested': fk_tested,
             'both_of_tested': both_tested}
@@ -342,7 +341,7 @@ def show_processed_gpis(workdir, plottype, filename):
     plt.annotate(textbox, fontsize=10, xy=(0.025, 0.05), xycoords='axes fraction',
                  bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
 
-    plt.savefig(workdir + '\\' + plotfile_name + '.png', dpi=f.dpi)
+    plt.savefig(os.path.join(workdir, plotfile_name + '.png'), dpi=f.dpi)
 
     return meta
 
@@ -415,7 +414,7 @@ def longest_homog_period_plots(workdir, startyear_plot=True, endyear_plot=True):
     plt.title(title, fontsize=20)
 
     filename = 'LongestHomogPeriod.png'
-    plt.savefig(workdir + '\\' + filename, dpi=f.dpi)
+    plt.savefig(os.path.join(workdir, filename + '.png'), dpi=f.dpi)
 
     return filename
 
@@ -448,15 +447,15 @@ def extreme_break(workdir, ref_prod, test_prod):
         plt.setp([a.get_xticklabels() for a in fig.axes[:-1]], visible=False)
 
         filename = 'ExtremeBreak_%s_%i' % (ref_prod, gpi)
-        plt.savefig(workdir + '\\' + filename + '.png')
+            plt.savefig(os.path.join(workdir, filename + '.png'), dpi=f.dpi)
 '''
 if __name__ == '__main__':
     # df = pd_from_2Dnetcdf(r"H:\HomogeneityTesting_data\output\CCI33\HomogeneityTest_merra2_1991-08-01.nc", return_only_tested=False)
     # extreme_break(r'H:\HomogeneityTesting_data\output\CCI22EGU','gldas_v2','cci_22')
     # show_tested_gpis(r"H:\HomogeneityTesting_data\output\v5","HomogeneityTestResult_2007-01-01_image.nc")
-    longest_homog_period_plots(r"D:\users\wpreimes\datasets\HomogeneityTesting_data\output\CCI41_ADJUST_global")
-    # show_processed_gpis(r"H:\HomogeneityTesting_data\output\CCI33", 'test',"HomogeneityTest_merra2_1991-08-01.nc" )
-    # inhomo_plot_with_stats(r'H:\HomogeneityTesting_data\output\v5',"HomogeneityTestResult_2007-01-01_image.nc")
+    # longest_homog_period_plots(r"D:\users\wpreimes\datasets\HomogeneityTesting_data\output\CCI41_ADJUST_global")
+    show_processed_gpis('/data-write/USERS/wpreimes/HomogeneityTesting_data/v1','test',"HomogeneityTestResult_2007-01-01_image.nc")
+    #inhomo_plot_with_stats('/data-write/USERS/wpreimes/HomogeneityTesting_data/v1',"HomogeneityTestResult_2007-01-01_image.nc")
     # compare_RTM_RTG(r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output\CCI41_noAdjust',
     #                r'D:\users\wpreimes\datasets\HomogeneityTesting_data\output\CCI41_ISMN',
     #                'CCI_41_COMBINED',

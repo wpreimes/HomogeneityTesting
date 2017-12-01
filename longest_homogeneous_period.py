@@ -12,7 +12,7 @@ import glob
 from datetime import datetime, timedelta
 import pygeogrids.netcdf as nc
 import xarray as xr
-from save_data import load_Log
+from save_data import LogFile
 from datetime import datetime
 from otherfunctions import dt_to_dec
 from cci_timeframes import CCITimes
@@ -32,10 +32,9 @@ def calc_longest_homogeneous_period(workdir, file_pattern='HomogeneityTestResult
     filenames = [afile.replace(workdir + '\\', '') for afile in fileslist]
 
     ccigrid = SMECV_Grid_v042()
-    log = load_Log(workdir)
-    products = log.get_products()
-    ref_prod = products['ref_prod']
-    test_prod = products['test_prod']
+    log = LogFile(workdir)
+    test_prod, ref_prod = log.get_products()
+
     mergetimes = CCITimes(test_prod, ignore_position=True).get_times()
     breaktimes = mergetimes['breaktimes']
 

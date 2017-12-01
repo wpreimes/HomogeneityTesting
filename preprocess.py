@@ -135,7 +135,7 @@ def calc_subseries(data):
     return subseries, startend
 
 
-def remove_outliers(column, b, t):
+def remove_outliers(column_in, b, t):
     '''
     Removes all data from a dataframe column above and below the selected
     percentiles
@@ -154,6 +154,7 @@ def remove_outliers(column, b, t):
         
     points: a list of points which where removed during filtering
     '''
+    column = column_in.copy().dropna()
     toppercentile = np.nanpercentile(column, t)
     bottompercentile = np.nanpercentile(column, b)
     points = column[(column > toppercentile) | (column < bottompercentile)].index.values

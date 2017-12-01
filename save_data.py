@@ -7,22 +7,18 @@ Created on Mon Jun 19 13:28:09 2017
 import pandas as pd
 import numpy as np
 import pygeogrids as grids
-import pygeogrids.netcdf as nc
 import xarray as xr
-from pynetcf.point_data import GriddedPointData
 import os
-import re
-from smecv_grid.grid import SMECV_Grid_v042
+from datetime import datetime
+
 
 
 class LogFile(object):
-    def __init__(self, workfolder):
-        # type: (str, str, str, str, list) -> None
+    def __init__(self, workfolder, initial_parameters):
+        # type: (str, dict) -> None
         self.workfolder = workfolder
         self.log_path = os.path.join(self.workfolder, 'log.txt')
 
-    def init_log(self, initial_parameters):
-        # type: (dict) -> str
         with open(self.log_path, 'w') as f:
             f.write('Log file for HomogeneityTesting \n')
             f.write('=====================================\n')
@@ -30,7 +26,7 @@ class LogFile(object):
                 f.write('%s: %s \n' % (name, str(val)))
             f.write('=====================================\n')
             f.write('\n')
-        return self.log_path
+
 
     def add_line(self, string):
         # type: (str) -> None
@@ -47,228 +43,318 @@ class LogFile(object):
             lines = [line.rstrip('\n') for line in f]
 
         for line in lines:
+            if not ':' in line: continue
             if 'Test Product' in line:
                 test_prod = line.split(':')[1].strip()
             elif 'Reference Product' in line:
                 ref_prod = line.split(':')[1].strip()
-            else:
-                raise Exception('cannot find reference product or test product in log file')
+
+        if not test_prod or not ref_prod:
+            raise Exception('cannot find reference product or test product in log file')
 
         return test_prod, ref_prod
 
 
-class Results2D(object):
-    def __init__(self, grid, path, breaktimes, cell_files_path=None):
-        if not all(isinstance(breaktime, str) for breaktime in breaktimes):
-            raise Exception("Breaktimes must be passed as list of strings")
+class RegularGriddedCellData(object):
+    #For saving data in cellfiles (for multiprocessing)
+    def __init__(self, path, grid=None, times=None,
+                 reference_time=datetime(1900,1,1,0,0),
+                 resolution=(0.25,0.25)):
+        '''
+        Cell Data Class uses xarray to write dictionaries of data to specified GPIS.
 
-        self.path = path
-        if not os.path.isdir(cell_files_path):
-            os.mkdir(cell_files_path)
-        self.cell_files_path = cell_files_path
-        self.breaktimes = breaktimes
-        self.pre_process_grid = grid  # type: grids.CellGrid
-        self.global_gpis = []
-        self.data = {breaktime: {'gpi': []} for breaktime in self.breaktimes}
+        :param path: string
+            Path to which the cell files are saved
+        :param grid: regular grid
+            Input regular grid on which the passed GPIs are, if not passed a regular grid created
+            with the passed resolution
+        :param times: list
+            Datetimes for which images are saved
+        :param reference_time: datetime
+            Reference for creating floats from datetimes
+        :param resolution: tuple
+            Resolution of the regular grid
+        '''
+
+        self.cell_files_path = path
+        if not os.path.exists(self.cell_files_path):
+            os.makedirs(self.cell_files_path)
+
+        self.times = times
+
+        self.reference_date = datetime(1900,1,1,0,0)
+
+        self.global_grid = grids.genreg_grid(*resolution).to_cell_grid(5)
+        if not grid:
+            self.grid = self.global_grid
+        else:
+            self.grid = grid
+
+        self.reset_buffer()
+        #FixMe: write data to buffer before saving to file instead of writing every point directly, BufferSize Problem
+
+    def reset_buffer(self):
+        self.cell_data_cell = None
+        self.cell_data_file = None
+        self.cell_data_frame = None
+        self.cell_data_buffersize = None
+
+    def change_cell(self, cell):
+        self.cell_data_cell = cell
+        self.load_cell_data(cell)
+
+    def load_cell_data(self, cell, type='frame'):
+        #if self.cell_data_frame:
+        #    print('Cell changed, write buffer to file')
+        #    self.write_netcdf()
+
+        self.cell_data_file = self.create_cellfile_name(cell=cell)
+        print self.cell_data_file
+        if os.path.isfile(self.cell_data_file):
+            dataset = xr.open_dataset(self.cell_data_file)
+            if type == 'xr':
+                return dataset
+            else:
+                self.cell_data_frame = dataset.to_dataframe()
+
+                self.cell_data_frame = self.cell_data_frame.reorder_levels(['time', 'lat', 'lon'])
+                self.cell_data_frame = self.cell_data_frame.sort_index()
+                return self.cell_data_frame
+
+        else:
+            self.cell_data_frame = self.create_empty_cell_data_frame()
+            if type == 'xr':
+                return self.cell_data_frame.to_xarray()
+            else:
+                return self.cell_data_frame
+
+    def create_empty_cell_data_frame(self):
+        gpis, lons, lats = self.grid.grid_points_for_cell(self.cell_data_cell)
+
+        df_concat = []
+        for time in self.times:
+            df = pd.DataFrame(data={'time': np.tile(time, lons.size),
+                                    'lon': lons, 'lat': lats})
+            df_concat.append(df)
+        df = pd.concat(df_concat)
+        df.set_index(['time', 'lat', 'lon'], inplace=True)
+        return df
+
+
+    def create_empty_global_data_frame(self):
+        #TODO: Delete me
+        gpis, lons, lats, cells = self.global_grid.get_grid_points()
+
+        df_concat = []
+        for time in self.times:
+            df = pd.DataFrame(data={'time': np.tile(time, lons.size),
+                                    'lon': lons, 'lat': lats})
+            df_concat.append(df)
+        df = pd.concat(df_concat)
+        df.set_index(['time', 'lat', 'lon'], inplace=True)
+        return df
+
+
+    def create_cellfile_name(self, gpi=None, cell=None):
+        # Returns filename (form:cellnumber.nc) and cell for passed gpi in passed grid
+        if gpi is not None:
+            grid_points = self.grid.get_grid_points()
+            gpi_index = np.where(grid_points[0] == gpi)[0][0]
+            cell = grid_points[3][gpi_index]
+            # Create filename from cell
+            file_pattern = str(cell)
+            while len(file_pattern) < 4:
+                file_pattern = str(0) + file_pattern
+
+            return os.path.join(self.cell_files_path, file_pattern + '.nc')
+
+        if cell is not None:
+            file_pattern = str(cell)
+            while len(file_pattern) < 4:
+                file_pattern = str(0) + file_pattern
+
+            return os.path.join(self.cell_files_path, file_pattern + '.nc')
+
+    def write_xr(self):
+        return self.cell_data_frame.to_xarray()
+
+    def write_netcdf(self):
+        dataset = self.write_xr()
+        dataset.to_netcdf(self.cell_data_file)
+        #self.reset_buffer()
+
+
+    def add_data(self, data, gpi=None, lat=None, lon=None, cell=None, time=None, write_now=True):
+
+        if not write_now: #TODO: Implement
+            raise NotImplementedError
+
+        if not data:
+            return
+
+        if not lat or not lon:
+            lon, lat = self.grid.gpi2lonlat(gpi)
+        elif not gpi:
+            gpi = self.grid.find_nearest_gpi(lon, lat)
+        else:
+            raise Exception('Select gpi and/or lon/lat')
+
+        if not cell:
+            cell = self.grid.gpi2cell(gpi)
+
+        if time not in self.times:
+            raise Exception('Time not in object definition')
+
+        if not self.cell_data_cell or cell != self.cell_data_cell:
+            self.change_cell(cell)
+
+        data['cell'] = cell
+        data['gpi'] = gpi
+
+        index = pd.MultiIndex.from_tuples([(time, lat, lon)], names=['time', 'lat','lon'])
+        gpi_data_frame = pd.DataFrame(index = index, data=data)
+
+        if not all(np.in1d(gpi_data_frame.columns.values, self.cell_data_frame.columns.values)):
+            for col in gpi_data_frame.columns.values:
+                if col not in self.cell_data_frame.columns.values:
+                    self.cell_data_frame[col] = np.nan
+        #TODO: This raises performance warning
+        self.cell_data_frame.set_value(gpi_data_frame.index,
+                                       gpi_data_frame.columns.values,
+                                       gpi_data_frame.loc[gpi_data_frame.index].values)
+
+
+        if write_now: #TODO: Buffer writing, last cell problem,
+            self.write_netcdf()
+
+    def check_saved_cells(self):
+        cells = []
+        for filename in os.listdir(self.cell_files_path):
+            try:
+                cell = int(filename[0:4])
+            except:
+                continue
+            if cell in self.global_grid.get_cells():
+                cells.append(cell)
+        return cells
 
     def empty_temp_files(self):
         files = os.listdir(self.cell_files_path)
         for file in files:
             os.remove(os.path.join(self.cell_files_path, file))
+        os.rmdir(os.path.join(self.cell_files_path))
 
-        return self.cell_files_path
-
-    def save_subgrid(self, gpis):
-        filename = 'breaktest_grid.nc'
-        subgrid = self.pre_process_grid.subgrid_from_gpis(gpis)
-
-        nc.save_grid(os.path.join(self.path, filename),
-                     grid=subgrid, subset_name='breaktest_flag',
-                     subset_meaning='Tested Points')
-
-        return subgrid
-
-    def reset_data(self):
-        self.data = {breaktime: {'gpi': []} for breaktime in self.breaktimes}
-
-    def add_data(self, gpi, breaktime, data_dict):
+    def make_global_file(self, filepath=None, filename= 'global.nc', fill_nan=True, mfdataset=False,
+                         keep_cell_files=False, drop_variables=None):
         '''
-        Fill buffer by adding data for gpi
-        :param gpi:
-        :param breaktime: str
-        :param data_dict:
-        :return:
+        Merge all cell files in the cell files path to a global netcdf image file.
+        :param filepath: string
+            Path in which the global image is saved
+        :param fill_nan: boolean
+            Select True to read all cell files directly and write to global file without filling missing cells.
+            This may lead to anomalies in the merged rendered image if the AOI is incoherent but speed up process.
+        :return: None
         '''
-        if gpi in self.data[breaktime]['gpi']:
-            raise Exception("GPI already stored")
+        # TODO: Add metadata from input
+        if not filepath:
+            filepath = os.path.join(self.cell_files_path)
+
+        glob_file = os.path.join(filepath, filename)
+
+        if not fill_nan and mfdataset:
+            cell_data = xr.open_mfdataset(os.path.join(self.cell_files_path,'*.nc'))
+            cell_data.to_netcdf(glob_file)
         else:
-            self.data[breaktime]['gpi'].append(gpi)
-            for name, value in data_dict.iteritems():
-                if name not in self.data[breaktime].keys():
-                    self.data[breaktime][name] = []
-                self.data[breaktime][name].append(value)
+            #cell_data = cell_data.to_dataframe()
+            #cell_data.to_xarray().to_netcdf(filepath)
 
-    def save_to_gridded_netcdf(self):
-
-        dataframes = []
-
-        for breaktime, data_dict in self.data.iteritems():
-            df = pd.DataFrame.from_dict(data_dict)
-            df = df.set_index('gpi')
-            df = df.rename(columns={column_name: column_name + '_' + breaktime for column_name in df.columns.values})
-            dataframes.append(df)
-
-        df = pd.concat(dataframes, axis=1)  # type: pd.DataFrame
-
-        if not df.index.is_unique:
-            raise Exception('df gpis not unique')
-
-        gpi_vals = df.to_dict('index')
-        grid = self.pre_process_grid.subgrid_from_gpis(gpi_vals.keys())
-
-        with GriddedPointData(self.cell_files_path, mode='a', grid=grid,
-                              fn_format='{:04d}.nc') as nc:
-
-            for loc_id, data_dict in gpi_vals.iteritems():
-                nc.write(loc_id, data_dict)
-                if loc_id not in self.global_gpis:
-                    self.global_gpis.append(loc_id)
-                else:
-                    raise Exception('Trying to set existing GPI %i' % loc_id)
-        return_gpis = self.global_gpis
-        self.reset_data()
-        self.global_gpis = []
-        return return_gpis
-
-
-def extract_test_infos(data_dict,tests):
-    # type: (dict) -> dict
-    status = int(data_dict['test_status'][0])
-    if status not in [0, 6, 7]:
-        return {'h_wk': np.nan, 'h_fk': np.nan, 'test_results': np.nan, 'test_status': status}
-    else:
-        wk = data_dict[tests['mean']]['h']
-        fk = data_dict[tests['var']]['h']
-
-        if type(wk) is str:
-            # wk test failed and contains error message
-            wk = np.nan
-            status = 6  # This is just an identification number, no math meaning
-        if type(fk) is str:
-            # fk failed and contains error message
-            fk = np.nan
-            status = 7  # This is just an identification number, no math meaning
-
-        all = 4.0
-        if wk == 1:
-            if fk == 1:
-                all = 3.0
+            firstfile = os.listdir(self.cell_files_path)[0]
+            variables = xr.open_dataset(os.path.join(self.cell_files_path, firstfile),
+                                        drop_variables=drop_variables).variables.keys()
+            if fill_nan:
+                self.grid = self.global_grid
             else:
-                all = 1.0
-        elif fk == 1:
-            all = 2.0
+                self.grid = (self.global_grid).subgrid_from_cells(self.check_saved_cells())
+            #TODO: implement multiprocessing and cell buffer, avoiding reopening large global file too often
 
-        return {'h_wk': wk, 'h_fk': fk, 'test_results': all, 'test_status': status}
+            for i, cell in enumerate(self.grid.get_cells()):
+                cellfile_name = self.create_cellfile_name(cell=cell)
+                if os.path.isfile(cellfile_name):
+                    cell_data = xr.open_dataset(cellfile_name, autoclose=True, drop_variables=drop_variables)
+                else:
+                    self.cell_data_cell = cell
+                    empty_cell_data = self.load_cell_data(cell, 'frame')
+                    for var in variables:
+                        if var not in empty_cell_data.index.names:
+                            empty_cell_data[var] = np.nan
+                        cell_data = empty_cell_data.to_xarray()
 
-
-def extract_adjust_infos(data_dict):
-    # type: (dict) -> dict
-    status = int(data_dict['adj_status'][0])
-    if status not in [0]:
-        return {'slope': np.nan, 'intercept': np.nan,
-                'k1_before': np.nan, 'k2_before': np.nan,
-                'd1_before': np.nan, 'd2_before': np.nan,
-                'k1_after': np.nan, 'k2_after': np.nan,
-                'd1_after': np.nan, 'd2_after': np.nan,
-                'adj_status': status}
-    else:
-        data_dict['adj_status'] = status
-
-        return data_dict  # DataDict from Adjustment incl. status
-
-
-class GlobalResults(Results2D):
-    def __init__(self, baseObject, post_process_grid):
-        self.__class__ = type(baseObject.__class__.__name__,
-                              (self.__class__, baseObject.__class__),
-                              {})
-
-        self.path = baseObject.path
-        self.cell_files_path = baseObject.cell_files_path
-        self.breaktimes = baseObject.breaktimes
-        self.fn_global = 'homogtest_global.nc'
-        self.fn_images_base = 'HomogeneityTestResult_%s_image.nc'
-
-        self.post_process_grid = post_process_grid
-
-    def save_global_file(self, keep_cell_files=False):
-
-        with GriddedPointData(self.cell_files_path, grid=self.post_process_grid,
-                              fn_format='{:04d}.nc') as nc:
-            nc.to_point_data(os.path.join(self.path, self.fn_global))
+                if not os.path.isfile(glob_file):
+                    cell_data.to_netcdf(glob_file)
+                else:
+                    try:
+                        global_data = xr.open_dataset(glob_file, autoclose=True)
+                        global_data_new = xr.merge([global_data.copy(), cell_data.copy()])
+                        global_data.close()
+                        global_data_new.to_netcdf(glob_file, mode='w')
+                        #global_data_new.to_netcdf(glob_file, mode='w')
+                    except:
+                        print('Could not merge file for cell %s to global file' % cell)
+                        continue
 
         if not keep_cell_files:
             self.empty_temp_files()
-        return self.fn_global
 
-    def create_image_files(self):
+def test_simple_adding():
+    grid = SMECV_Grid_v042()
+    global_grid = grids.genreg_grid(0.25, 0.25).to_cell_grid(5)
 
-        file_meta_dict = {
-            'test_results': 'Break detection classes by Hopothesis tests.'
-                            '1 = WK only, 2 = FK only, 3 = WK and FK, 4 = None',
-            'test_status': '0 = Testing performed,'
-                           '1 = No data for timeframe,'
-                           '2 = Test TS and Ref TS do not match,'
-                           '3 = Spearman correlation too low,'
-                           '4 = Min. Dataseries len. not reached,'
-                           '5 = neg/nan correl. aft. bias corr.,'
-                           '6 = Error during WK testing,'
-                           '7 = Error during FK testing,'
-                           '8 = WK test and FK test failed,'
-                           '9 = Error reading gpi',
-            'adj_status': '0 = Adjustment performed,'
-                          '1 = No adjustment necessary,'
-                          '2 = negative correlation,'
-                          '3 = positive correlation insignificant,'
-                          '4 = max number of iterations reached,'
-                          '5 = max. iter. reached w.o improvements,'
-                          '9 = No adjustment attempted'}
+    cells = [2137, 2173, 2209]
+    path = r'C:\Temp\ncwrite'
 
-        global_file = xr.open_dataset(os.path.join(self.path, self.fn_global))
-        df = global_file.to_dataframe()
+    times = pd.DatetimeIndex(start='2000-01-01', end='2000-01-3', freq='D')
 
-        filenames = []
-        for breaktime_str in self.breaktimes:
-            df_breaktime = df[['lat', 'lon']]
-            for col_name in df.columns.values:
-                if breaktime_str in col_name:
-                    [var, breaktime] = re.split(r'[_](?=[0-9])', col_name)
-                    df_breaktime.loc[df[col_name].index,var] = df[col_name]
-            df_breaktime.loc[df['location_id'].index, 'location_id'] = df['location_id'].astype(int)
-            df_breaktime = df_breaktime.sort_values(['lat', 'lon']) \
-                .set_index(['lat', 'lon'])
+    # dimensions
+    celldata = RegularGriddedCellData(grid, path, [t for t in times])
 
-            global_image = df_breaktime.to_xarray()
+    for cell in cells:
+        gpis, lons, lats = grid.grid_points_for_cell(cell)
+        for i, gpi in enumerate(gpis):
+            print gpi
+            for time in times:
+                data_dict = {'var1': np.random.rand(1)[0],
+                             'var2': np.random.rand(1)[0],
+                             'var3': np.random.rand(1)[0]}
 
-            for name, val in file_meta_dict.iteritems():
-                global_image.variables[name].attrs['Values'] = val
+                celldata.add_data(data_dict, gpi=gpi, time=time)
 
-            filename = self.fn_images_base % breaktime_str
-            global_image.to_netcdf(os.path.join(self.path, filename))
-
-            filenames.append(filename)
-        return filenames
-
+    celldata.make_global_file()
 
 if __name__ == '__main__':
-    gpis = range(392888, 392901) + range(391448, 391461)
-    grid = SMECV_Grid_v042()
-    save_obj = Results2D(grid, r'C:\Temp', ['2000-01-01'])
-    for gpi in gpis:
-        save_obj.add_data(gpi, '2000-01-01', {'testresult': {'status_test': '1'},
-                                              'adjresult': {'status_adj': '1'}})
-    global_gpis = save_obj.save_to_gridded_netcdf()
+    from cci_timeframes import CCITimes
+    from smecv_grid.grid import SMECV_Grid_v042
 
-    glob_obj = GlobalResults(r'C:\Temp', r'C:\Temp\gridded_files', ['2000-01-01'])
-    global_file_name = glob_obj.save_global_file(False)
-    image_files_names = glob_obj.create_image_files()
+
+    workfolder = r'D:\users\wpreimes\datasets\HomogeneityTesting_data\v21'
+    test_prod = 'CCI_41_COMBINED'
+    skip_times = None
+    save_adjusted_data = True
+    times_obj = CCITimes(test_prod, ignore_position=True,
+                         skip_times=skip_times)
+    results = ['test_results_before_adjustment', 'lin_model_params_before_adjustment']
+    if save_adjusted_data:
+        results = results + ['test_results_after_adjustment', 'lin_model_params_after_adjustment']
+    save_objects = dict.fromkeys(results)
+    for name in save_objects.keys():
+        save_objects[name] = RegularGriddedCellData(grid=SMECV_Grid_v042(),
+                                                    path=os.path.join(workfolder, 'temp_homogtest_cellfiles', name),
+                                                    times=times_obj.get_times(None, as_datetime=True)['breaktimes'],
+                                                    resolution=(0.25, 0.25))
+    for name, save_obj in save_objects.iteritems():
+        if name not in ['lin_model_params_after_adjustment']: continue
+        filename = 'GLOBAL_' + name + '.nc'
+        save_obj.make_global_file(workfolder, filename, False, False, True, 'adj_status')
+
+
+
+

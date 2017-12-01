@@ -16,6 +16,7 @@ from datetime import datetime
 import csv
 
 
+
 def cci_extract(_string):
     cont = _string.upper().split('_')
     if len(cont) == 3:
@@ -145,7 +146,7 @@ def dt_to_dec(dt):
 
 
 def save_as_mat(path, gpi, test_prod, ref_prod, anomaly, timeframe):
-    from interface import HomogTest
+
     # type: (int) -> None
 
     #Saves the SM data for active timeframe for testproduct and refproduct to the selected path
@@ -213,7 +214,7 @@ def fill_holes_lress(fill_series, other_series):
     # fill holes in max_series from regression coefficients found
 
 
-def merge_ts(dataframe):
+def merge_ts(dataframe_in):
     '''
     Merge temporally coinciding timeseries via interpolation from
     bivariate linear regression.
@@ -223,6 +224,7 @@ def merge_ts(dataframe):
         Only use correlating (R>0.8) TS for interpolation.
     -Return gap filled reference TS
     '''
+    dataframe = dataframe_in
     max_series_name = np.argmax(dataframe.notnull().sum().to_frame()[0])
     quick_corr = dataframe.corr().sort_values(max_series_name, ascending=False).index.values[1:]
     # Order other TSs via correlation to max_series and return list corr_ordered

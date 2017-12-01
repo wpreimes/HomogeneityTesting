@@ -155,6 +155,7 @@ class CCITimes(object):
     def _init_timeframes_for_adjusted(self, product):
         info = cci_extract(product)
         if info['adjust']:
+            info['adjust'] = None
             return cci_string_combine(info)
         else:
             raise Exception('No test times for selected cci product')
@@ -289,7 +290,7 @@ class CCITimes(object):
 
 
 if __name__ == '__main__':
-    ds = CCITimes('CCI_33_COMBINED', ignore_position=True, skip_times=[0,1,2,3,4,5,6,8])
+    ds = CCITimes('CCI_41_COMBINED_ADJUSTED', ignore_position=True, skip_times=None)
     for gpi in [620964, 805227]:  # First Point < 37 Lat, second > 37 Lat
         times = ds.get_times(gpi, as_datetime=True)
         print 'breaktimes:'
@@ -302,7 +303,7 @@ if __name__ == '__main__':
         print (ds.breaktime_for_timeframe(gpi, times['timeframes'][0]))
         #print (ds.get_adjacent(gpi, times['timeframes'][1], 2))
         #print (ds.get_adjacent(gpi, times['breaktimes'][5], -2))
-    ds = CCITimes('CCI_33_COMBINED', ignore_position=True)
+    ds = CCITimes('CCI_41_COMBINED_ADJUSTED', ignore_position=True)
     for gpi in [620964, 805227]:  # First Point < 37 Lat, second > 37 Lat
         times = ds.get_times(gpi, as_datetime=False)
         print 'breaktimes:'

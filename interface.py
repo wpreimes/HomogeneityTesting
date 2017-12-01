@@ -75,6 +75,7 @@ class BreakTestData(object):
             try:
                 df_time = (self.data).read_gpi(gpi, range[0], range[1])
                 df_time = df_time / 100  # type: pd.DataFrame
+
                 df_time[self.ref_prod] = calc_anomaly(df_time[self.ref_prod])
                 df_time[self.test_prod] = calc_anomaly(df_time[self.test_prod])
             except:
@@ -107,7 +108,7 @@ class BreakTestData(object):
         # Drop days where either dataset is missing
         return df_time
 
-    def group_by_breaktime(self, df_time, breaktime, min_data_size, ignore_exception=False):
+    def group_by_breaktime(self, df_time_in, breaktime, min_data_size, ignore_exception=False):
         '''
         Divide Time Series into 2 subgroups according to breaktime (before/after)
 
@@ -115,6 +116,7 @@ class BreakTestData(object):
         :param breaktime: datetime
         :return: pd.DataFrame
         '''
+        df_time = df_time_in.copy()
         df_time['group'] = np.nan
 
         i1 = df_time.loc[:breaktime]
@@ -133,7 +135,8 @@ class BreakTestData(object):
 
         return df_time, ni1, ni2
 
-    def temp_resample(self, df, how='M', threshold=0.33):
+    @staticmethod
+    def temp_resample(df_in, how='M', threshold=None):
         '''
         Resample a dataframe to monthly values, if the number of valid values (not nans) in a month
         is smaller than the defined threshold, the monthly resample will be NaN
@@ -145,14 +148,45 @@ class BreakTestData(object):
         :return: pd.DataFrame
             The monthly resampled Data
         '''
-        concat = []
-        for column in df.columns.values:
-            resampled = df[[column]].groupby(pd.TimeGrouper(how)) \
-                .filter(lambda g: g.count() > round(g.count() * threshold)) \
-                .resample(how).mean()
-            concat.append(resampled)
+        df = df_in.copy()
 
-        return pd.concat(concat, axis=1)
+        #TODO: Move this outside the function
+        # Check if any data is left for testdata and reference data
+        if df.isnull().all().refdata or df.isnull().all().testdata:
+            raise Exception('1: No data for the selected timeframe')
+
+        if not threshold:
+            return df.resample(how).mean()
+        else:
+            if how!='M':
+                raise NotImplementedError
+
+            years, months = df.index.year, df.index.month
+            startday = datetime(years[0], months[0], 1)
+            last_year, last_month = years[-1], months[-1]
+
+            if last_month == 12:
+                next_month, next_year = 1 , last_year + 1
+            else:
+                next_month, next_year = last_month + 1, last_year
+
+            days_last_month =  (datetime(next_year, next_month, 1) - datetime(last_year, last_month, 1)).days
+            endday = datetime(last_year, last_month, days_last_month)
+
+            index_full = pd.DatetimeIndex(start=startday, end = endday, freq = 'D')
+            df_alldays = pd.DataFrame(index=index_full,
+                                      data = {'dCount' : range(index_full.size)})
+
+            df = pd.concat([df, df_alldays],axis=1)
+            concat = []
+            for column in df.columns.values:
+                if column == 'dCount':continue
+                resampled = df[[column, 'dCount']].groupby(pd.TimeGrouper(how)) \
+                    .filter(lambda g: g.count()[column] > round(g.count()['dCount'] * threshold)) \
+                    .resample(how).mean()
+                concat.append(resampled[[column]])
+
+            return pd.concat(concat, axis=1)
 
     def ref_data_correction(self, df_time):
         '''
@@ -163,12 +197,58 @@ class BreakTestData(object):
         :return: pd.DataFrame
             DataFrame with bias corrected reference data
         '''
-        df_time['bias_corr_refdata'], rxy, pval, ress = regress(df_time)
+        data = df_time.copy()
+        adjusted_data, rxy, pval, ress = regress(data)
+
+        data['bias_corr_refdata'] = adjusted_data
 
         if any(np.isnan(ress)):
             raise Exception('5: Negative or NaN correlation after refdata correction')
 
-        return df_time['bias_corr_refdata']
+        return data['bias_corr_refdata']
+
+    @staticmethod
+    def filter_by_quantiles(df_in, lower=0.1, upper=.9):
+        '''
+        Mask data outside of the definded quantile range
+        '''
+        df = df_in.copy()
+        upper_threshold = df.quantile(upper)
+        lower_threshold = df.quantile(lower)
+        df.loc[:, 'diff_flag'] = np.nan
+        index_masked=df.query('Q < %f & Q > % f' % (upper_threshold, lower_threshold)).index
+        #index_masked = df[(df[colname] < upper_threshold) & (df[colname] > lower_threshold)].index
+        df.loc[index_masked, 'diff_flag'] = 0
+        return df['diff_flag']
+
+    def quantile_filtering(self, data_in, breaktime, parts, lower_quantile, upper_quantile):
+        '''
+        quantile filtering based of differences between refdata and testdata
+        '''
+        data = data_in.copy()
+        if parts == 'both':
+            filter_mask = pd.concat([self.filter_by_quantiles(data.loc[:breaktime,'Q'].to_frame(),
+                                                             lower_quantile,
+                                                             upper_quantile),
+                                    self.filter_by_quantiles(data.loc[breaktime + pd.DateOffset(1):,'Q'].to_frame(),
+                                                             lower_quantile,
+                                                             upper_quantile)],
+                                    axis=0)
+        elif parts == 'first':
+            filter_mask = pd.concat([self.filter_by_quantiles(data.loc[:breaktime,'Q'].to_frame(),
+                                                             lower_quantile,
+                                                             upper_quantile),
+                                    pd.Series(index = data.loc[breaktime + pd.DateOffset(1):].index, data=0).to_frame()],
+                                    axis=0)
+        elif parts == 'last':
+            filter_mask = pd.concat([pd.Series(index = data.loc[:breaktime].index, data=0).to_frame(),
+                                     self.filter_by_quantiles(data.loc[breaktime + pd.DateOffset(1):,'Q'].to_frame(),
+                                                             lower_quantile,
+                                                             upper_quantile)],
+                                    axis=0)
+
+        data['diff_flag'] = filter_mask
+        return data.loc[data['diff_flag'] == 0]
 
 
 class BreakTestBase(BreakTestData):
@@ -176,14 +256,15 @@ class BreakTestBase(BreakTestData):
     Class containing functions and properties for relative homogeneity testing
     '''
     def __init__(self, test_prod, ref_prod, tests, alpha, anomaly):
-        # type: (str,str,list,float,Union(bool,str)) -> None
+        # type: (str,str,dict,float,Union(bool,str)) -> None
         '''
         :param test_prod: str
             as in BreakTestData
         :param ref_prod: str
             as in BreakTestData
-        :param tests: list
-            list of names of the tests to run
+        :param tests: dict
+            dictionary of test types and test names as implemented in self.run_tests()
+            eg. {'mean':wilkoxon, 'var':'scipy_fligner_killeen'}
         :param alpha: float
             significance level for all tests
         :param anomaly: str
@@ -191,7 +272,7 @@ class BreakTestBase(BreakTestData):
         '''
         BreakTestData.__init__(self, test_prod, ref_prod, anomaly)
         self.tests = tests
-        self.testresults = {test: None for test in self.tests}
+        self.fligner_approx = 'chi' #TODO: defined by user, implement fisher
         self.alpha = alpha
 
     def get_testresults(self):
@@ -205,39 +286,46 @@ class BreakTestBase(BreakTestData):
             test results as returned by run_tests
         :return: bool
         '''
-        if all(h == 0 for h in [testresult[test]['h'] for test in self.tests]):
-            return None, True
+        test_h = {test: testresult['h_%s' % test] for test in self.tests.values()}
+        if all([h == 0 for h in test_h.values()]):
+            return None, None, False
         else:
             break_found_by = []
-            for test in self.tests:
-                if testresult[test]['h'] == 1:
+            failed_tests = []
+            for test in self.tests.values():
+                if test_h[test] == 1:
                     break_found_by.append(test)
+                elif test_h[test] == 99:
+                    failed_tests.append(test)
 
-            return break_found_by, False
+            has_break = True if break_found_by else False
 
-    def compare_testresults(self, reference, result, priority=None):
-        ref_found_by, ref_is_homog = self.check_testresult(reference)
-        res_found_by, res_is_homog = self.check_testresult(result)
+            return failed_tests if failed_tests else None, \
+                   break_found_by if break_found_by else None, \
+                   has_break
 
-        if not ref_is_homog and res_is_homog:
+    def compare_testresults(self, reference_result, last_result, priority='mean'):
+        ref_tests_failed, ref_found_by, ref_has_break = self.check_testresult(reference_result)
+        last_tests_failed, last_found_by, last_has_break = self.check_testresult(last_result)
+
+        if ref_has_break and not last_has_break:
             # Break was removed --> better
             return True
-        elif not ref_is_homog and not res_is_homog:
+        elif ref_has_break and last_has_break:
             # Both found break, use priority to decide
             # compare tests
-            if Counter(ref_found_by) == Counter(res_found_by):  # Same tests found break
-                return False  # --> worse
+            if Counter(ref_found_by) == Counter(last_found_by):  # Same tests found break
+                return False  # nothing improved --> worse
             elif priority:
                 for p in priority:
-                    if (p in ref_found_by) and (p not in res_found_by):
-                        return True  # --> Priority was removed
+                    if (self.tests[p] in ref_found_by) and (self.tests[p] not in last_found_by):
+                        return True  # --> Priority was removed, other might have been added
                     else:
                         continue  # Move to next Priority
-                return False  # Priority was not removed
+                return False  # --> Priority was not removed
             else:
-                return False
-        else:
-            return True
+                return False # --> no priority defined
+
 
     @staticmethod
     def wk_test(dataframe, alternative='two-sided', alpha=0.01):
@@ -257,7 +345,7 @@ class BreakTestBase(BreakTestData):
         return h, {'zval': stats_wk, 'pval': p_wk}
 
     @staticmethod
-    def fk_test(dataframe, mode='median', alpha=0.01):
+    def fk_test(dataframe_in, mode='median', alpha=0.01):
         # type: (pd.DataFrame, str, float) -> (int,dict)
         '''
         FKTEST Fligner-Killeen test for homogeneity of variances.
@@ -272,6 +360,7 @@ class BreakTestBase(BreakTestData):
         '''
 
         # number of measurements and datagroups
+        dataframe = dataframe_in.copy()
         df = dataframe.rename(columns={'Q': 'data'})
         df = df.dropna()
         N = df.index.size
@@ -350,6 +439,7 @@ class BreakTestBase(BreakTestData):
 
     @staticmethod
     def lv_test(dataframe, mode='median', alpha=0.1):
+        #TODO: Not tested
         df = dataframe.rename(columns={'Q': 'data'})
         df = df.dropna()
         sample1 = df[df['group' == 0.].index]['Q'].values
@@ -366,23 +456,62 @@ class BreakTestBase(BreakTestData):
         return h, stats_lv
 
     def check_corr(self, df_time):
-        # Check if any data is left for testdata and reference data
-        if df_time.isnull().all().refdata or df_time.isnull().all().testdata:
-            raise Exception('1: No data for the selected timeframe')
-
-        # Check if lengths of remaining datasets equal TODO: it always is, can be removed
-        if df_time['refdata'].index.size != df_time['testdata'].index.size:
-            raise Exception('2: Test timeseries and reference timeseries do not match')
-
         # Calculation of Spearman-Correlation coefficient
         corr, pval = stats.spearmanr(df_time['testdata'], df_time['refdata'], nan_policy='omit')
 
         # Check the rank correlation so that correlation is positive and significant
         if not (corr > 0 and pval < 0.01):  # TODO: stricter thresholds?
-            raise Exception('3: Spearman correlation failed with correlation %f \ '
-                            '(must be >0)and pval %f (must be <0.01)' % (corr, pval))
+            raise Exception('3: Spearman correlation failed with correlation %f ' 
+                            '(must be >0) and pval %f (must be <0.01)' % (corr, pval))
 
         return corr, pval
+
+    def restructure_test_results(self, test_results):
+        # type: (dict) -> dict
+
+        restructured_results = {}
+
+        for test in self.tests.values():
+            restructured_results['h_%s' % test] = test_results[test]['h']
+            if self.fligner_approx in test_results[test]['stats'].keys():
+                stats = test_results[test]['stats'][self.fligner_approx]
+                restructured_results['z_%s' % test] = stats['z']
+            else:
+                stats = test_results[test]['stats']
+            restructured_results['p_%s' % test] = stats['pval']
+
+        test_status = 0 # '0: Testing successful'
+
+        if 'mean' in self.tests.keys():
+            mean_test_result = restructured_results['h_%s' % self.tests['mean']]
+            if np.isnan(mean_test_result):
+                test_status = 6 # '6: WK was selected but failed.'
+                restructured_results['h_%s' % self.tests['mean']] = 99
+        else:
+            mean_test_result = np.nan
+        if 'var' in self.tests.keys():
+            var_test_result = restructured_results['h_%s' % self.tests['var']]
+            if np.isnan(var_test_result):
+                test_status = 7 # '7: FK was selected but failed.'
+                restructured_results['h_%s' % self.tests['var']] = 99
+        else:
+            var_test_result = np.nan
+
+        # Combine results to single value
+        #TODO: Do this when plotting data
+        if mean_test_result == 1:
+            if var_test_result == 1:
+                all = 3.0
+            else:
+                all = 1.0
+        elif var_test_result == 1:
+            all = 2.0
+        else:
+            all = 4.0
+
+        restructured_results.update({'test_results': all, 'test_status': test_status})
+
+        return restructured_results
 
     def run_tests(self, data):
         # type: (pd.DataFrame, list) -> (pd.DataFrame, dict)
@@ -393,32 +522,53 @@ class BreakTestBase(BreakTestData):
         :param min_data_size:
         :return:
         '''
-        tests = self.tests
+        tests = self.tests.values()
+        testresults = {}
+
         # Wilcoxon rank sum test
         if 'wilkoxon' in tests:
             try:
                 h_wk, stats_wk = self.wk_test(data, 'two-sided')
                 wilkoxon = {'h': h_wk, 'stats': stats_wk}
             except:
-                wilkoxon = {'h': 'Error during WK testing'}
+                wilkoxon = {'h': np.nan, 'stats': np.nan}
                 pass
-            self.testresults['wilkoxon'] = wilkoxon
+            testresults['wilkoxon'] = wilkoxon
         if 'fligner_killeen' in tests:
             try:
                 h_fk, stats_fk = self.fk_test(data[['Q', 'group']], mode='median', alpha=self.alpha)
                 fligner_killeen = {'h': h_fk, 'stats': stats_fk}
             except:
-                fligner_killeen = {'h': 'Error during FK testing'}
+                fligner_killeen = {'h': np.nan, 'stats': np.nan}
                 pass
-            self.testresults['fligner_killeen'] = fligner_killeen
+            testresults['fligner_killeen'] = fligner_killeen
         if 'scipy_fligner_killeen' in tests:
             try:
                 h_fk, stats_fk = self.scipy_fk_test(data[['Q', 'group']], mode='median', alpha=self.alpha)
                 fligner_killeen = {'h': h_fk, 'stats': stats_fk}
             except:
-                fligner_killeen = {'h': 'Error during FK testing'}
+                fligner_killeen = {'h': np.nan, 'stats': np.nan}
                 pass
-            self.testresults['scipy_fligner_killeen'] = fligner_killeen
+            testresults['scipy_fligner_killeen'] = fligner_killeen
 
-        self.testresults.update({'test_status': '0: Testing successful'})
-        return data, self.testresults
+        self.testresults = self.restructure_test_results(testresults)
+
+        return self.testresults
+
+    def get_meta(self):
+        test_meta = {1 : 'WK only',
+                     2 : 'FK only',
+                     3 : 'WK and FK',
+                     4 : 'None'}
+        status_meta = {0 : 'Testing successful',
+                       1 : 'No data for the selected timeframe',
+                       2 : ' ',
+                       3 : 'Spearman correlation too low',
+                       4 : 'Min. Dataseries len. not reached',
+                       5 : 'neg/nan correl. aft. bias corr.',
+                       6 : 'WK was selected but failed',
+                       7 : 'FK was selected but failed',
+                       8 : 'WK test and FK test failed',
+                       9 : 'Could not import data for gpi'}
+        return test_meta, status_meta
+

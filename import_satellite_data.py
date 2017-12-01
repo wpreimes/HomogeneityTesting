@@ -19,6 +19,7 @@ from otherfunctions import regress, cci_extract, cci_string_combine
 from read_adjusted_ts import cciAdjustedTs
 import re
 from rsroot import root_path
+import sys
 
 
 def read_warp_ssm(ssm, ssf, gpi):
@@ -46,8 +47,8 @@ class QDEGdata_M(object):
         self.m_otherdata = None
 
         # Data that must be resampled
-        if 'gldas_v2' in products:
-            m_otherproduts.append('gldas_v2')
+        if 'gldas_v20' in products:
+            m_otherproduts.append('gldas_v20')
         if 'gldas_v1' in products:
             m_otherproduts.append('gldas_v1')
         if 'gldas-merged' in products:
@@ -124,7 +125,7 @@ class QDEGdata_D(object):
     # Requires ECV_CCI_gridv4.nc
 
     def __init__(self, products, resample='mean_over_day', only_sm=True):
-
+        products = filter(None,products)
         self.resample = resample
         self.only_sm = only_sm
 
@@ -136,8 +137,8 @@ class QDEGdata_D(object):
         # Add 3H products
         if 'gldas_v1' in products:
             d_otherproducts.append('gldas_v1')
-        if 'gldas_v2' in products:
-            d_otherproducts.append('gldas_v2')
+        if 'gldas_v20' in products:
+            d_otherproducts.append('gldas_v20')
         if 'gldas_v21' in products:
             d_otherproducts.append('gldas_v21')
         if 'gldas-merged' in products:
@@ -161,20 +162,13 @@ class QDEGdata_D(object):
                     if info['prefix'] != 'CCI' or info['version'] not in cci_versions or info['type'] not in cci_types:
                         raise Exception('cci version or product not known...use format cci_XX_PRODUCT')
 
-                    if os.path.isdir(os.path.join(root_path.d, 'USERS', 'wpreimes', 'datasets', 'CCI_%s_D' % info['version'])):
-                        print('Found local files for %s daily cci_%s %s data' % (info['type'], info['version'],
-                                                                                 info['adjust'] if info['adjust'] else 'UNADJUSTED'))
+                    if 'win' in sys.platform:
+                        cfg_path = os.path.join(root_path.h, 'workspace', 'HomogeneityTesting', 'cci_cfg_local', 'win')
                     else:
-                        print ('Use CCI data from R')
-
-                    cfg_path = os.path.join(root_path.d, 'USERS', 'wpreimes', 'datasets', 'HomogeneityTesting_data',
-                                            'cci_cfg_local')
-                    if not os.path.isdir(cfg_path):
-                        cfg_path = os.path.join(root_path.h, 'HomogeneityTesting_data', 'cci_cfg_local')
-
+                        cfg_path = os.path.join(root_path.h, 'workspace', 'HomogeneityTesting', 'cci_cfg_local', 'linux')
 
                     cci = ESA_CCI_SM('ESA_CCI_SM_v0%s.%s' % (info['version'][0], info['version'][1]),
-                                     parameter=info['type'],
+                                     parameter=info['type']+'_ADJUSTED' if info['adjust'] else info['type'],
                                      cfg_path=cfg_path)
                     self.dayproducts[cci_product] = cci
 
@@ -182,7 +176,11 @@ class QDEGdata_D(object):
             lu_table_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'merra_gpi_LUT.csv')
             self.lkup = pd.read_csv(lu_table_file, index_col=0)
 
-            path_merra2 = os.path.join(root_path.d, 'USERS', 'wpreimes', 'datasets', 'MERRA2_D', 'ts_daily_0030')
+            if 'win' in sys.platform:
+                path_merra2 = os.path.join(root_path.d, 'USERS', 'wpreimes', 'datasets', 'MERRA2_D', 'ts_daily_0030')
+            else:
+                path_merra2 = os.path.join('/','data-read','USERS','wpreimes','MERRA2_D','ts_daily_0030')
+
             if os.path.isdir(path_merra2):
                 print('Found local files for daily merra2')
             else:
@@ -232,21 +230,16 @@ class QDEGdata_D(object):
         for name in [cci_name for cci_name in self.dayproducts.keys() if 'CCI' in cci_name]:
             cci_product = self.dayproducts[name]
             try:
-                if isinstance(cci_product, GriddedNcIndexedRaggedTs):
-                    cci_product = cciAdjustedTs(cci_product.path,os.path.join(cci_product.path, 'ECV_CCI_gridv4.nc'))
-                    df_cci = pd.DataFrame(cci_product.read(gpi))
-                    if df_cci.columns.values[0]!=name:
-                        df_cci=df_cci.rename(columns={df_cci.columns.values[0]:name})
-                    df_cci = df_cci*100
-                else:
-                    df_cci = pd.DataFrame(cci_product.read(gpi))
+                df_cci = pd.DataFrame(cci_product.read(gpi))
+                if not isinstance(df_cci.index, pd.DatetimeIndex): # for standard cci data
                     df_cci = df_cci.set_index('jd')
                     m, d, y = caldat(df_cci.index.values)
                     df_cci.index = pd.to_datetime(pd.DataFrame(data={'year': y, 'month': m, 'day': d}))
-                    df_cci = df_cci[startdate:enddate]
                     df_cci = df_cci[df_cci['flag'] == 0]
-                    df_cci['sm'].loc[df_cci['sm'] == -999999.] = np.nan
+                    df_cci.loc[df_cci['sm'] == -999999., 'sm'] = np.nan
                     df_cci=df_cci.rename(columns={'sm': name})
+                else: # adjusted CCI data
+                    df_cci[name] = df_cci[name]*100
             except:
                 df_cci[name] = pd.Series(index=pd.date_range(start=startdate, end=enddate))
 
@@ -316,13 +309,13 @@ class QDEGdata_3H(object):
                 path_gldasv1 = r"R:\Datapool_processed\GLDAS\GLDAS_NOAH025SUBP_3H\datasets\netcdf"
             self.H3products['gldas_v1'] = GLDASTs(path_gldasv1)
 
-        if 'gldas_v2' or 'gldas-merged' in products:
-            if os.path.isdir(r'D:\USERS\wpreimes\datasets\gldas_v2'):
+        if 'gldas_v20' or 'gldas-merged' in products:
+            if os.path.isdir(r'D:\USERS\wpreimes\datasets\gldas_v20'):
                 print('Found local files for GLDAS2 3H data')
-                path_gldasv2 = r'D:\USERS\wpreimes\datasets\gldas_v2'
+                path_gldasv2 = r'D:\USERS\wpreimes\datasets\gldas_v20'
             else:
                 path_gldasv2 = r"R:\Datapool_processed\GLDAS\GLDAS_NOAH025_3H.020\datasets\netcdf"
-                self.H3products['gldas_v2'] = GLDASTs(path_gldasv2)
+                self.H3products['gldas_v20'] = GLDASTs(path_gldasv2)
 
         if 'gldas_v21' or 'gldas-merged' in products:
             if os.path.isdir(r'D:\USERS\wpreimes\datasets\gldas_v21'):
@@ -354,9 +347,9 @@ class QDEGdata_3H(object):
             else:
                 data_group = pd.concat([data_group, ts_gldas_v1.rename('gldas_v1')], axis=1)
 
-        if 'gldas_v2' in self.H3products.keys():
+        if 'gldas_v20' in self.H3products.keys():
             try:
-                ts_gldas_v2 = self.H3products['gldas_v2'].read_ts(gpi)['086_L1']
+                ts_gldas_v2 = self.H3products['gldas_v20'].read_ts(gpi)['086_L1']
             except:
                 ts_gldas_v2 = pd.Series(index=pd.date_range(start=startdate, end=enddate))
 
@@ -365,9 +358,9 @@ class QDEGdata_3H(object):
                 # print 'No gldas v1 data for gpi %0i' % gpi
                 pass
             if data_group.empty:
-                data_group['gldas_v2'] = ts_gldas_v2
+                data_group['gldas_v20'] = ts_gldas_v2
             else:
-                data_group = pd.concat([data_group, ts_gldas_v2.rename('gldas_v2')], axis=1)
+                data_group = pd.concat([data_group, ts_gldas_v2.rename('gldas_v20')], axis=1)
 
         if 'gldas_v21' in self.H3products.keys():
             try:
@@ -386,7 +379,7 @@ class QDEGdata_3H(object):
 
         if 'gldas-merged' in self.H3products.keys():
             try:
-                ts_gldas_v2 = self.H3products['gldas_v2'].read_ts(gpi)['086_L1']
+                ts_gldas_v2 = self.H3products['gldas_v20'].read_ts(gpi)['086_L1']
                 ts_gldas_v21 = self.H3products['gldas_v21'].read_ts(gpi)['SoilMoi0_10cm_inst']
             except:
                 ts_gldas_v2 = pd.Series(index=pd.date_range(start=startdate, end=enddate))
@@ -397,7 +390,7 @@ class QDEGdata_3H(object):
                 df_gldas_merged = pd.DataFrame(index=pd.date_range(start=startdate, end=enddate, freq='3H'),
                                                data={'gldas-merged': np.nan})
             else:
-                df_gldas_merged = pd.concat([ts_gldas_v2.rename('gldas_v2'),
+                df_gldas_merged = pd.concat([ts_gldas_v2.rename('gldas_v20'),
                                              ts_gldas_v21.rename('gldas_v21')], axis=1)
 
             ts_gldas_merged = df_gldas_merged.mean(axis=1).rename('gldas-merged')
@@ -411,12 +404,13 @@ class QDEGdata_3H(object):
 
 if __name__ == '__main__':
     from grid_functions import cells_for_continent
-    gpi = 453403
-    timeframe = [datetime(1978,10,26), datetime(2016,12,31)]
-    data = QDEGdata_D(products=['merra2','CCI_41_COMBINED'])
+    import matplotlib.pyplot as plt
+
+    gpi = 428978
+    timeframe = [datetime(1990,10,26), datetime(2010,1,1)]
+    data = QDEGdata_D(products=['gldas_v20','CCI_41_COMBINED','merra2'])
     ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
-    bias_corr_refdata, rxy, pval, ress = regress(
-        ts[['CCI_41_COMBINED', 'merra2']].rename(columns={'CCI_41_COMBINED': 'testdata', 'merra2': 'refdata'}))
-    ts['merra2_corr'] = bias_corr_refdata
     print ts
+
+    #start('CCI_33_COMBINED', 'merra2', '/data-write/USERS/wpreimes/HomogeneityTesting_data', cells=[777], skip_times = None, anomaly = False, perform_adjustment = False, parallel_processes = 1)
 
