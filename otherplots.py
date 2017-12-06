@@ -23,64 +23,6 @@ import xarray as xr
 from interface import BreakTestData
 from cci_timeframes import CCITimes
 
-
-def valid_months_plot(workdir, testproduct, refproduct, resample_method, min_monthly_values):
-    # NOT IN PROCESS
-
-    # Count the number of valid months i.e, month that contain >=
-    # the minimum amount of values
-
-    # Count values BEFORE breaktime
-
-    # Count value AFTER breaktime
-    time_obj = CCITimes(testproduct, ignore_position=True)
-
-    grid = SMECV_Grid_v042()  # type: CellGrid()
-
-    # grid = grid.subgrid_from_cells([777]) #TODO: Delete
-
-    gpis = grid.get_grid_points()[0]
-    lons = grid.get_grid_points()[1]
-    lats = grid.get_grid_points()[2]
-
-    test_obj = BreakTestData(testproduct, refproduct, False)
-    DF_Points = pd.DataFrame(index=gpis, data={'lon': lons, 'lat': lats})
-    for breaktime in time_obj.get_times()['breaktimes']:
-        DF_Points['before %s' % breaktime] = np.nan
-        DF_Points['after %s' % breaktime] = np.nan
-
-    for iteration, gpi in enumerate(gpis):
-        times = time_obj.get_times(as_datetime=False)
-        starts = np.flipud(np.array([timeframe[0] for timeframe in times['timeframes']]))
-        ends = np.flipud(np.array([timeframe[1] for timeframe in times['timeframes']]))
-        breaktimes = np.flipud(times['breaktimes'])
-
-        if iteration % 100 == 0:
-            print 'processing gpi %i (%i of %i)' % (gpi, iteration, gpis.size)
-        try:
-            df_time = test_obj.read_gpi(gpi, starts[0], ends[-1])
-
-            for start, breaktime, end in zip(starts, breaktimes, ends):
-                start = datetime.strptime(start, '%Y-%m-%d')
-                breaktime = datetime.strptime(breaktime, '%Y-%m-%d')
-                end = datetime.strptime(end, '%Y-%m-%d')
-
-                df_subtime = df_time[['testdata']][start:end].dropna()
-                df_resample = test_obj.temp_resample(df_subtime, resample_method, min_monthly_values)
-                df_group, len_bef, len_aft = \
-                    test_obj.group_by_breaktime(df_resample, breaktime, 3, ignore_exception=True)
-
-                DF_Points.loc[gpi, 'before %s' % str(breaktime.date())] = len_bef
-                DF_Points.loc[gpi, 'after %s' % str(breaktime.date())] = len_aft
-        except:
-            continue
-    DF_Points = DF_Points.sort_values(['lat', 'lon']) \
-        .set_index(['lat', 'lon'])
-
-    global_image = DF_Points.to_xarray()
-    global_image.to_netcdf(os.path.join(workdir, '%s_valid_monthly_obs.nc' % testproduct))
-
-
 def inhomo_plot_with_stats(workdir, filename):
     # type: (str) -> dict
     '''

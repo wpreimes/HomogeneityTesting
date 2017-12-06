@@ -32,27 +32,29 @@ def split_cells(cells_identifier, grid):
         cells = cells_identifier
     return cells
 
+
 def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells, log_file, test_prod, ref_prod, anomaly,
                       process_no, save_adjusted_data=True):
-
     # Function for multicore processing
 
     print('Start process %i' % process_no)
 
     ########################################## TODO: Values to change
     adjusted_data_path = os.path.join(workfolder, test_prod + '_ADJUSTED')
-    min_data_for_temp_resampling = 0.33  # If CCI data contains less values, the monthly value is resampled as nan
-    min_data_size = 3  # Minimum number of monthly values before/after break to perform homogeneity testing # TODO: different value?
+    min_data_for_temp_resampling = 0.33 # If CCI data contains less values, the monthly value is resampled as nan
+    min_data_size = 5  # Minimum number of monthly values before/after break to perform homogeneity testing # TODO: different value?
     resample_method = 'M'  # or D
     refdata_correction_for = 'timeframe'  # iteration, full or timeframe
     tests = {'mean': 'wilkoxon', 'var': 'scipy_fligner_killeen'}
     backward_extended_timeframes = False
-    model_plots = True
+    model_plots = False
     quantile_filtering_increase = 0.01  # Increase of quantile per iteration (0 ,0.03, 0.04,... and 1, 0.97, 0.94,....]
     first_iter_mode = 'both'  # 'd' (BAD!!!) or 'both' for adjustment if first iteration found wk break
-    max_retries = 10 # max number of iterations if break is still found after adjustment
+    max_retries = 10  # max number of iterations if break is still found after adjustment
     adjust_always = False
-    priority = ['mean','var']
+    priority = False # or ['mean', 'var']
+    models_from = 'daily'
+    remove_data_until_iter = 5 #Remove bad values for each iteration until this one, than stay at the amount
     ##########################################
 
     if process_no == 0:
@@ -97,18 +99,18 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
         if not os.path.isdir(model_plots_dir):
             os.mkdir(model_plots_dir)
 
-
     for icell, cell in enumerate(cells):
 
         print 'Processing QDEG Cell %i (iteration %i of %i)' % (cell, icell + 1, len(cells))
         log_file.add_line('%s: Start Testing Cell %i' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), cell))
 
         for iteration, gpi in enumerate(grid.grid_points_for_cell(cell)[0]):
+            #if gpi != 426089: continue #TODO: DELETE
             print 'processing gpi %i (%i of %i)' % (gpi, iteration, grid.grid_points_for_cell(cell)[0].size)
 
             homogeneous_breaktimes = []  # List of tested and approved break times for extending time frames
 
-            try: # load testdata and reference data
+            try:  # load testdata and reference data
                 df_time = test_obj.read_gpi(gpi,
                                             start=test_obj.range[0],
                                             end=test_obj.range[1])
@@ -124,11 +126,11 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
             timeframes, breaktimes = times['timeframes'], times['breaktimes']
 
             for i, (timeframe, breaktime) in enumerate(zip(timeframes, breaktimes)):
-
-                lin_model_params_before_adjustment = {}
-                lin_model_params_after_adjustment = {}
-                test_results_before_adjustment = {}
-                test_results_after_adjustment = {}
+                #if breaktime != datetime(1998,1,1): continue #TODO: DELETE
+                lin_model_params_before_adjustment = {'adjustment_status': 0}
+                lin_model_params_after_adjustment = {'adjustment_status': 0}
+                test_results_before_adjustment = {'test_status': 0}
+                test_results_after_adjustment = {'test_status': 0}
 
                 retries = 0
                 # In case that after adjustment a break is still found, re-correct the reference data to
@@ -143,13 +145,12 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
 
                     try:  # Homogeneity Testing
                         data_daily = data_daily.dropna(subset=['testdata', 'refdata'])
+                        # Calculate difference TimeSeries
+                        data_daily['Q'] = data_daily['testdata'] - data_daily['refdata']
 
-                        data_daily['Q'] = data_daily['testdata'] - data_daily['refdata'] # Calculate difference TimeSeries
-
-                        data_resampled = test_obj.temp_resample(data_daily,
-                                                                'M',
-                                                                min_data_for_temp_resampling)
-
+                        data_resampled, resample_info = test_obj.temp_resample(data_daily,
+                                                                               'M',
+                                                                               min_data_for_temp_resampling)
 
                         # Checks if there is data left and calculates spearman correlation
                         corr, pval = test_obj.check_corr(data_resampled)
@@ -159,8 +160,8 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
                                                                            ignore_exception=False)
 
                         # Correct bias in reference data, again (this time for monthly values)
-                        #TODO: Do this again, changes the model of part 2 for eacht iteration?
-                        #if refdata_correction_for == 'iteration' or retries == 0:
+                        # TODO: Do this again, changes the model of part 2 for each iteration?
+                        # if refdata_correction_for == 'iteration' or retries == 0:
                         #    data_resampled.loc[:,'refdata'] = test_obj.ref_data_correction(data_resampled.loc[:,('testdata', 'refdata')])
                         #    data_resampled.loc[:, 'Q'] = data_resampled.loc[:, 'testdata'] - data_resampled.loc[:, 'refdata']
 
@@ -169,6 +170,7 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
 
                         # TODO: Check this for a timeframe with a break
                         failed_tests, break_found_by, found_break = test_obj.check_testresult(test_result)
+                        print break_found_by
 
                     except Exception as e:
                         # Testing Failed
@@ -179,20 +181,28 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
                         break
 
                     try:
-                        #TODO: Filter only for first iteration, for next iterations use residuals to remove bad values
-                        #if retries ==0:
-                        lq = 0.05
-                        uq = 0.95
-                        data_daily_filtered = test_obj.quantile_filtering(data_daily,# if retries == 0 else data_daily_filtered,
-                                                                          breaktime,
-                                                                          'both', #if retries==0 else 'first',
-                                                                          lq if retries == 0 else lq + retries * quantile_filtering_increase,
-                                                                          uq if retries == 0 else uq - retries * quantile_filtering_increase)
+                        # TODO: Filter only for first iteration, for next iterations use residuals to remove bad values
+                        lq, uq = 0.05, 0.95
+                        if retries <= remove_data_until_iter : # Remove more values where ref and test is different for first 5 iterations
+                            mult = retries
+                        else:   # For later iterations dont remove more but remove as much as before
+                            mult = remove_data_until_iter
+                        lq = lq + mult * quantile_filtering_increase
+                        uq = uq - mult * quantile_filtering_increase
 
-                        adjust_obj = LinearAdjustment(data_daily_filtered, #TODO: DataDaily, DataDailyFiltered oder MonthlyData
+
+                        data_filtered = test_obj.quantile_filtering(data_daily if models_from == 'daily' else data_resampled,
+                                                                   # if retries == 0 else data_daily_filtered,
+                                                                   breaktime,
+                                                                   'both',  # if retries==0 else 'first',
+                                                                   lq,
+                                                                   uq)
+
+                        adjust_obj = LinearAdjustment(data_filtered,
+                                                      # TODO: DataDaily, DataDailyFiltered oder MonthlyData
                                                       breaktime,
                                                       'first',
-                                                      'both',
+                                                      'both' if retries > 0 else first_iter_mode,
                                                       (retries, adjust_obj.model_plots) if (retries > 0 and adjust_obj) else model_plots)
 
                         lin_model_params = adjust_obj.get_lin_model_params()
@@ -200,13 +210,13 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
                         if save_adjusted_data:  # break was found, attempt adjustment
                             if found_break or adjust_always:
                                 data_adjusted = adjust_obj.adjust_data(data_daily, 'both' if retries == 0 else 'first')
-                                adj_status = 0 #'0: Adjusted Data for time frame saved'
+                                adj_status = 1  # '1: Adjusted Data for time frame saved'
 
                                 df_time.loc[data_adjusted.index, 'testdata'] = data_adjusted
                             else:
-                                adj_status = 8 #'8: Adjusted Data is not being stored'
+                                adj_status = 8  # '8: Adjusted Data is not being stored'
                         else:
-                            adj_status = 8 #'8: Adjusted Data is not being stored'
+                            adj_status = 8  # '8: Adjusted Data is not being stored'
                     except Exception as e:
                         print '%s: Adjustment failed: %s' % (str(breaktime.date()), e)
                         adj_status = int(str(e)[0])
@@ -235,39 +245,30 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
                     else:
                         break
 
-
                 if model_plots:
-                    if adjust_obj and retries > 0:# TODO add this and retries > 0: # show plots only for points that were adjusted
-                        adjust_obj.save_plots(model_plots_dir, '%i_%s' %(gpi, str(breaktime.date())))
+                    if adjust_obj and retries > 0:  # TODO add this and retries > 0: # show plots only for points that were adjusted
+                        adjust_obj.save_plots(model_plots_dir, '%i_%s' % (gpi, str(breaktime.date())))
                     else:
                         plt.close('all')
 
-                if test_results_after_adjustment:
+                if 'test_result' in test_results_after_adjustment:
                     _, _, found_break = test_obj.check_testresult(test_results_after_adjustment)
                     if found_break:
                         print ('%s: Could not remove break after %i retries :(' % (str(breaktime.date()), max_retries))
                         lin_model_params_after_adjustment['adjustment_status'] = '4: max number of iterations reached'
 
-                    #TODO: Test this
-                    if test_obj.compare_testresults(test_results_before_adjustment,
-                                                    test_results_after_adjustment,
-                                                    priority=priority):
-                        # If adjustment did not improve results
-                        df_time[timeframe[0]:timeframe[1]] = original_values[timeframe[0]:timeframe[1]]
-                        lin_model_params_after_adjustment['adjustment_status'] = '5: max. iter. reached w.o improvements'
+                    # TODO: Test this, include this?
+                    if priority:
+                        if test_obj.compare_testresults(test_results_before_adjustment,
+                                                        test_results_after_adjustment,
+                                                        priority=priority):
+                            # If adjustment did not improve results
+                            df_time[timeframe[0]:timeframe[1]] = original_values[timeframe[0]:timeframe[1]]
+                            lin_model_params_after_adjustment[
+                                'adjustment_status'] = '5: max. iter. reached w.o improvements'
 
-                #elif test_obj.check_testresult(test_results_before_adjustment)
 
-                '''
-                if 'test_status' in test_results_before_adjustment.keys():
-                    test_results_before_adjustment['test_status'] = np.nan
-                if 'test_status' in test_results_after_adjustment.keys():
-                    test_results_after_adjustment['test_status'] = np.nan
-                if 'adjustment_status' in lin_model_params_after_adjustment.keys():
-                    lin_model_params_after_adjustment['adjustment_status'] = np.nan
-                if 'adjustment_status' in lin_model_params_before_adjustment.keys():
-                    lin_model_params_before_adjustment['adjustment_status'] = np.nan
-                '''
+                # elif test_obj.check_testresult(test_results_before_adjustment)
 
                 save_objects['test_results_before_adjustment'].add_data(test_results_before_adjustment,
                                                                         gpi, time=breaktime)
@@ -324,15 +325,14 @@ def start(test_prod, ref_prod, path, cells_identifier='global', skip_times=None,
         save_objects[name] = RegularGriddedCellData(grid=SMECV_Grid_v042(),
                                                     path=os.path.join(workfolder, 'temp_homogtest_cellfiles', name),
                                                     times=times_obj.get_times(None, as_datetime=True)['breaktimes'],
-                                                    resolution=(0.25,0.25))
+                                                    resolution=(0.25, 0.25))
 
-
-    cells =  list(split(split_cells(cells_identifier, SMECV_Grid_v042()), parallel_processes)) # split cells for processes
+    cells = list(
+        split(split_cells(cells_identifier, SMECV_Grid_v042()), parallel_processes))  # split cells for processes
 
     processes = []
     q = Queue()
     finished_processes = []
-
 
     for process_no in range(parallel_processes):
         cells_for_process = cells[process_no]
@@ -357,18 +357,19 @@ def start(test_prod, ref_prod, path, cells_identifier='global', skip_times=None,
     for process in processes:
         process.join()
 
-    #_, saved_gpis = join_files(workfolder, csv_files)
+    # _, saved_gpis = join_files(workfolder, csv_files)
     print('Finished Testing (and Adjustment)')
     log_file.add_line('=====================================')
     # Global files and images from testing
 
 
     for name, save_obj in save_objects.iteritems():
-        #TODO: Parallelise this
+        # TODO: Parallelise this
         filename = 'GLOBAL_' + name + '.nc'
-        global_file_name = save_obj.make_global_file(workfolder,filename, False, False, keep_cell_files=True)  # Merge test result cell files to global file
+        global_file_name = save_obj.make_global_file(workfolder, filename, False, False,
+                                                     keep_cell_files=True)  # Merge test result cell files to global file
 
-    #post_process_grid = save_obj.save_subgrid(saved_gpis,
+    # post_process_grid = save_obj.save_subgrid(saved_gpis,
     #                                          'breaktest_grid.nc',
     #                                          'Breaktest')  # Save test gpis subset to gridfile
 
@@ -389,6 +390,7 @@ def start(test_prod, ref_prod, path, cells_identifier='global', skip_times=None,
             meta = show_processed_gpis(workfolder, 'adjustment', image_file)
     '''
 
+
 if __name__ == '__main__':
     # Refproduct must be one of gldas-merged,gldas-merged-from-file,merra2,ISMN-merge
     # Testproduct of form cci_*version*_*product*
@@ -396,7 +398,7 @@ if __name__ == '__main__':
     start('CCI_41_COMBINED',
           'merra2',
           r'D:\users\wpreimes\datasets\HomogeneityTesting_data',
-          cells_identifier=[2244],  # 'global', a continent or a list of cells
+          cells_identifier=[2318],  # 'global', a continent or a list of cells
           skip_times=None,  # list of breaktimes to skip
           anomaly=False,  # False, timeframe or ccirange
           save_adjusted_data=True,

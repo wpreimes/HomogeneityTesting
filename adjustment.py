@@ -155,7 +155,7 @@ class LinearAdjustment(object):
             try:
                 b = np.dot(np.dot(np.linalg.inv(N), np.transpose(X)), testdata.values)
             except np.linalg.LinAlgError:
-                raise Exception('4: Matrix singular')
+                raise Exception('6: N Matrix singular')
 
             y_model = np.dot(b, np.transpose(X))
             e = np.dot(-1 * X, b) + testdata.values
@@ -237,7 +237,8 @@ class LinearAdjustment(object):
 
         if self.adjust_part == 'last':
             if self.adjust_param == 'd': #TODO: This is deprecated
-                meandiff = part1.mean() - part2.mean()
+                #meandiff = part1.mean() - part2.mean()
+                meandiff = dd
                 adjusted_part2 = part2 + meandiff
             else:
                 adjusted_part2 = cc * part2 + dd
@@ -245,7 +246,8 @@ class LinearAdjustment(object):
 
         elif self.adjust_part == 'first':
             if self.adjust_param == 'd': #TODO: This is deprecated
-                meandiff = part2.mean() - part1.mean()
+                #meandiff = part2.mean() - part1.mean()
+                meandiff = dd
                 adjusted_part1 = part1 + meandiff
             else:
                 adjusted_part1 = cc * part1 + dd
@@ -281,13 +283,13 @@ class LinearAdjustment(object):
             return data_dict  # DataDict from Adjustment incl. status
 
     def get_meta(self):
-        adjustment_meta = {0 : 'adjusted data for time frame saved',
-                           1 : '',
+        adjustment_meta = {0 : 'no adjustment performed (initial)',
+                           1 : 'adjusted data for time frame saved',
                            2 : 'negative correlation',
                            3 : 'positive correlation not significant',
-                           4 : ' ',
-                           5 : ' ',
-                           6 : ' ',
+                           4 : 'max number of iterations reached',
+                           5 : 'max. iter. reached w.o improvements',
+                           6 : 'N Matrix singular',
                            7 : ' ',
                            8 : 'adjusted Data is not being stored',
                            9 : ' '}

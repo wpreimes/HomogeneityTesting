@@ -150,10 +150,63 @@ class BreakTestData(object):
         '''
         df = df_in.copy()
 
-        #TODO: Move this outside the function
-        # Check if any data is left for testdata and reference data
-        if df.isnull().all().refdata or df.isnull().all().testdata:
-            raise Exception('1: No data for the selected timeframe')
+        if 'refdata' in df.columns:
+            #TODO: Move this outside the function
+            # Check if any data is left for testdata and reference data
+            if df.isnull().all().refdata or df.isnull().all().testdata:
+                raise Exception('2: No data for the selected timeframe')
+        if not threshold:
+            return df.resample(how).mean()
+        else:
+            years, months = df.index.year, df.index.month
+
+            if len(years)==0 or len(months)==0:
+                return None
+
+            startday = datetime(years[0], months[0], 1)
+            last_year, last_month = years[-1], months[-1]
+
+            if last_month == 12:
+                next_month, next_year = 1 , last_year + 1
+            else:
+                next_month, next_year = last_month + 1, last_year
+
+            days_last_month =  (datetime(next_year, next_month, 1) - datetime(last_year, last_month, 1)).days
+            endday = datetime(last_year, last_month, days_last_month)
+
+            index_full = pd.DatetimeIndex(start=startday, end = endday, freq = 'D')
+            df_alldays = pd.DataFrame(index=index_full,
+                                      data = {'count_should' : 1}).resample(how).sum()
+
+            df_mean = df.resample(how).mean()
+            df['count'] = 1
+            df_mean['count_is'] = df[['count']].resample(how).sum()
+            df_mean['count_should'] = df_alldays['count_should'] * threshold
+
+            df_filtered = df_mean.loc[df_mean['count_is'] >= df_mean['count_should']]
+
+            return df_filtered.drop(['count_should', 'count_is'], axis=1), df_filtered[['count_should', 'count_is']]
+
+    @staticmethod
+    def temp_resample_old(df_in, how='M', threshold=None):
+        '''
+        Resample a dataframe to monthly values, if the number of valid values (not nans) in a month
+        is smaller than the defined threshold, the monthly resample will be NaN
+
+        :param how: str
+            Time frame for temporal resampling, M = monthly, 10D = 10daily,...
+        :param threshold: float
+            % of valid days (not nan) in timeframe defined in 'how'
+        :return: pd.DataFrame
+            The monthly resampled Data
+        '''
+        df = df_in.copy()
+
+        if 'refdata' in df.columns:
+            #TODO: Move this outside the function
+            # Check if any data is left for testdata and reference data
+            if df.isnull().all().refdata or df.isnull().all().testdata:
+                raise Exception('2: No data for the selected timeframe')
 
         if not threshold:
             return df.resample(how).mean()
@@ -162,6 +215,10 @@ class BreakTestData(object):
                 raise NotImplementedError
 
             years, months = df.index.year, df.index.month
+
+            if len(years)==0 or len(months)==0:
+                return None
+
             startday = datetime(years[0], months[0], 1)
             last_year, last_month = years[-1], months[-1]
 
@@ -331,11 +388,13 @@ class BreakTestBase(BreakTestData):
     def wk_test(dataframe, alternative='two-sided', alpha=0.01):
         # type: (pd.DataFrame, str) -> (float,dict)
 
-        p_wk = stats.mannwhitneyu(dataframe['Q'].loc[dataframe['group'] == 0],
-                                  dataframe['Q'].loc[dataframe['group'] == 1],
-                                  alternative=alternative)[1]
+        U_wk, p_wk = stats.mannwhitneyu(dataframe['Q'].loc[dataframe['group'] == 0],
+                                        dataframe['Q'].loc[dataframe['group'] == 1],
+                                        alternative=alternative)
         stats_wk = stats.ranksums(dataframe['Q'].loc[dataframe['group'] == 0],
                                   dataframe['Q'].loc[dataframe['group'] == 1])[0]  # type: dict
+
+
 
         if p_wk < alpha:
             h = 1
@@ -560,9 +619,9 @@ class BreakTestBase(BreakTestData):
                      2 : 'FK only',
                      3 : 'WK and FK',
                      4 : 'None'}
-        status_meta = {0 : 'Testing successful',
-                       1 : 'No data for the selected timeframe',
-                       2 : ' ',
+        status_meta = {0 : 'Not tested (initial)',
+                       1 : 'Testing successful',
+                       2 : 'No data for the selected timeframe',
                        3 : 'Spearman correlation too low',
                        4 : 'Min. Dataseries len. not reached',
                        5 : 'neg/nan correl. aft. bias corr.',

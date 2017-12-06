@@ -11,8 +11,6 @@ import xarray as xr
 import os
 from datetime import datetime
 
-
-
 class LogFile(object):
     def __init__(self, workfolder, initial_parameters):
         # type: (str, dict) -> None
