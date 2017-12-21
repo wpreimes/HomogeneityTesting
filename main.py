@@ -4,6 +4,7 @@ Created on Wed Mar 22 17:05:55 2017
 
 @author: wpreimes
 """
+
 from typing import Union
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,25 +13,16 @@ from datetime import datetime
 from multiprocessing import Process, Queue
 from pynetcf.time_series import GriddedNcIndexedRaggedTs
 from otherfunctions import csv_read_write, join_files, split, create_workfolder
-from interface import BreakTestBase
+from interface import BreakTestBase, get_test_meta
 from cci_timeframes import CCITimes
 from save_data import RegularGriddedCellData, LogFile
-from grid_functions import cells_for_continent
-from adjustment import LinearAdjustment
+from grid_functions import split_cells
+from adjustment import LinearAdjustment, get_adjustment_meta
 from otherplots import show_processed_gpis, inhomo_plot_with_stats, longest_homog_period_plots
 from smecv_grid.grid import SMECV_Grid_v042
 import warnings
 import pandas as pd
-
-
-def split_cells(cells_identifier, grid):
-    if cells_identifier == 'global':
-        cells = grid.get_cells()
-    elif isinstance(cells_identifier, str):
-        cells = cells_for_continent(cells_identifier)
-    else:
-        cells = cells_identifier
-    return cells
+from pytesmo.scaling import mean_std
 
 
 def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells, log_file, test_prod, ref_prod, anomaly,
@@ -47,14 +39,16 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
     refdata_correction_for = 'timeframe'  # iteration, full or timeframe
     tests = {'mean': 'wilkoxon', 'var': 'scipy_fligner_killeen'}
     backward_extended_timeframes = False
-    model_plots = False
+    model_plots = True
     quantile_filtering_increase = 0.01  # Increase of quantile per iteration (0 ,0.03, 0.04,... and 1, 0.97, 0.94,....]
     first_iter_mode = 'both'  # 'd' (BAD!!!) or 'both' for adjustment if first iteration found wk break
-    max_retries = 10  # max number of iterations if break is still found after adjustment
+    max_retries = 20  # max number of iterations if break is still found after adjustment
     adjust_always = False
     priority = False # or ['mean', 'var']
     models_from = 'daily'
-    remove_data_until_iter = 5 #Remove bad values for each iteration until this one, than stay at the amount
+    remove_data_until_iter = 10 #Remove bad values for each iteration until this one, than stay at the amount
+    filter_parts='both'
+    adjust_all_values_before_break = False
     ##########################################
 
     if process_no == 0:
@@ -74,6 +68,11 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
         log_file.add_line('%s: %s' % ('Adjust always, also if no break was found', adjust_always))
         log_file.add_line('%s: %s' % ('Prioritize kind of break to be removed (allows lower prioritzed to be added)',
                                       priority))
+        log_file.add_line('%s: %s' % ('create linear models with values', models_from))
+        log_file.add_line('%s: %s' % ('Perform quantile filtering until iteration', remove_data_until_iter))
+        log_file.add_line('%s: %s' % ('Filter both parts for first iter and for other iters:', filter_parts))
+        log_file.add_line('%s: %s' % ('adjust whole time series before the break time for each found break',
+                                      adjust_all_values_before_break))
         log_file.add_line('-------------------------------')
 
     test_obj = BreakTestBase(test_prod,
@@ -105,7 +104,7 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
         log_file.add_line('%s: Start Testing Cell %i' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), cell))
 
         for iteration, gpi in enumerate(grid.grid_points_for_cell(cell)[0]):
-            #if gpi != 426089: continue #TODO: DELETE
+            #if gpi not in [359849,365614,348323,362720,351200]:continue
             print 'processing gpi %i (%i of %i)' % (gpi, iteration, grid.grid_points_for_cell(cell)[0].size)
 
             homogeneous_breaktimes = []  # List of tested and approved break times for extending time frames
@@ -120,13 +119,14 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
             except:
                 continue
 
-            original_values = df_time.copy()
+            original_values = df_time.copy(deep=True)
 
             times = times_obj.get_times(gpi, as_datetime=True)
             timeframes, breaktimes = times['timeframes'], times['breaktimes']
 
             for i, (timeframe, breaktime) in enumerate(zip(timeframes, breaktimes)):
-                #if breaktime != datetime(1998,1,1): continue #TODO: DELETE
+                #if breaktime == datetime(1991,8,5):
+                    #pass#TODO: DELETE
                 lin_model_params_before_adjustment = {'adjustment_status': 0}
                 lin_model_params_after_adjustment = {'adjustment_status': 0}
                 test_results_before_adjustment = {'test_status': 0}
@@ -170,7 +170,6 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
 
                         # TODO: Check this for a timeframe with a break
                         failed_tests, break_found_by, found_break = test_obj.check_testresult(test_result)
-                        print break_found_by
 
                     except Exception as e:
                         # Testing Failed
@@ -191,25 +190,42 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
                         uq = uq - mult * quantile_filtering_increase
 
 
-                        data_filtered = test_obj.quantile_filtering(data_daily if models_from == 'daily' else data_resampled,
-                                                                   # if retries == 0 else data_daily_filtered,
-                                                                   breaktime,
-                                                                   'both',  # if retries==0 else 'first',
-                                                                   lq,
-                                                                   uq)
+                        flags, data_filtered = test_obj.quantile_filtering(data_in=data_daily if models_from == 'daily' else data_resampled,
+                                                                           # if retries == 0 else data_daily_filtered,
+                                                                           breaktime=breaktime,
+                                                                           parts='both' if retries == 0 else filter_parts,  # if retries==0 else 'first',
+                                                                           lower_quantile=lq,
+                                                                           upper_quantile=uq)
 
-                        adjust_obj = LinearAdjustment(data_filtered,
+                        adjust_obj = LinearAdjustment(data=data_filtered,
                                                       # TODO: DataDaily, DataDailyFiltered oder MonthlyData
-                                                      breaktime,
-                                                      'first',
-                                                      'both' if retries > 0 else first_iter_mode,
-                                                      (retries, adjust_obj.model_plots) if (retries > 0 and adjust_obj) else model_plots)
+                                                      breaktime=breaktime,
+                                                      adjust_part='first',
+                                                      adjust_param='both' if retries > 0 else first_iter_mode,
+                                                      model_plots=(retries, adjust_obj.model_plots) if (retries > 0 and adjust_obj) else model_plots)
+                        print('testdata:')
+                        print adjust_obj.var_before
+                        print adjust_obj.var_after
+                        print('Q:')
+                        print np.nanvar(data_daily.loc[:breaktime,'Q'].values)
+                        print np.nanvar(data_daily.loc[breaktime:, 'Q'].values)
 
+
+                        print('---')
                         lin_model_params = adjust_obj.get_lin_model_params()
 
                         if save_adjusted_data:  # break was found, attempt adjustment
                             if found_break or adjust_always:
-                                data_adjusted = adjust_obj.adjust_data(data_daily, 'both' if retries == 0 else 'first')
+                                if adjust_all_values_before_break:
+                                    data_adjusted = adjust_obj.adjust_data(pd.concat([df_time[:breaktime],
+                                                                                     data_daily[breaktime + pd.DateOffset(1):]],axis=0),
+                                                                           return_part = 'both' if retries == 0 else 'first')
+
+                                else:
+                                    data_adjusted = adjust_obj.adjust_data(data_daily,
+                                                                           return_part = 'both' if retries == 0 else 'first')
+
+
                                 adj_status = 1  # '1: Adjusted Data for time frame saved'
 
                                 df_time.loc[data_adjusted.index, 'testdata'] = data_adjusted
@@ -251,32 +267,41 @@ def process_for_cells(q, workfolder, skip_times, times_obj, save_objects, cells,
                     else:
                         plt.close('all')
 
-                if 'test_result' in test_results_after_adjustment:
+                if 'test_results' in test_results_after_adjustment:
                     _, _, found_break = test_obj.check_testresult(test_results_after_adjustment)
                     if found_break:
-                        print ('%s: Could not remove break after %i retries :(' % (str(breaktime.date()), max_retries))
-                        lin_model_params_after_adjustment['adjustment_status'] = '4: max number of iterations reached'
+                        print ('%s: Could not remove %s break after %i retries :(' % (str(breaktime.date()),
+                                                                                      str(break_found_by),max_retries))
+                        lin_model_params_after_adjustment['adjustment_status'] = 4 #'4: max number of iterations reached'
 
-                    # TODO: Test this, include this?
-                    if priority:
-                        if test_obj.compare_testresults(test_results_before_adjustment,
-                                                        test_results_after_adjustment,
-                                                        priority=priority):
-                            # If adjustment did not improve results
+                        # TODO: Test this, include this?
+                        if priority:
+                            pass
+                            '''
+                            # Check if the prioritized break was removed and save if it was, else replace with original values
+                            if test_obj.compare_testresults(test_results_before_adjustment,
+                                                            test_results_after_adjustment,
+                                                            priority=priority):
+                                # If adjustment did not improve results
+                                df_time[timeframe[0]:timeframe[1]] = original_values[timeframe[0]:timeframe[1]]
+                                lin_model_params_after_adjustment[
+                                    'adjustment_status'] = '5: max. iter. reached w.o improvements'
+                            '''
+                        else:
+                            #If there is still a break replace values by original ones
                             df_time[timeframe[0]:timeframe[1]] = original_values[timeframe[0]:timeframe[1]]
-                            lin_model_params_after_adjustment[
-                                'adjustment_status'] = '5: max. iter. reached w.o improvements'
 
 
                 # elif test_obj.check_testresult(test_results_before_adjustment)
 
                 save_objects['test_results_before_adjustment'].add_data(test_results_before_adjustment,
                                                                         gpi, time=breaktime)
-                save_objects['test_results_after_adjustment'].add_data(test_results_after_adjustment,
-                                                                       gpi, time=breaktime)
                 save_objects['lin_model_params_before_adjustment'].add_data(lin_model_params_before_adjustment,
                                                                             gpi, time=breaktime)
-                save_objects['lin_model_params_after_adjustment'].add_data(lin_model_params_after_adjustment,
+                if save_adjusted_data:
+                    save_objects['lin_model_params_after_adjustment'].add_data(lin_model_params_after_adjustment,
+                                                                               gpi, time=breaktime)
+                    save_objects['test_results_after_adjustment'].add_data(test_results_after_adjustment,
                                                                            gpi, time=breaktime)
 
             if save_adjusted_data:
@@ -362,33 +387,64 @@ def start(test_prod, ref_prod, path, cells_identifier='global', skip_times=None,
     log_file.add_line('=====================================')
     # Global files and images from testing
 
+    global_images_folder_name = 'global_images_plots'
 
     for name, save_obj in save_objects.iteritems():
-        # TODO: Parallelise this
+        var_meta = {'test_results': get_test_meta()[0],
+                     'test_status': get_test_meta()[1],
+                     'adjustment_status': get_adjustment_meta()}
+        global_meta = {'test_prod' :test_prod, 'ref_prod':ref_prod}
+
+
         filename = 'GLOBAL_' + name + '.nc'
-        global_file_name = save_obj.make_global_file(workfolder, filename, False, False,
-                                                     keep_cell_files=True)  # Merge test result cell files to global file
+        if 'before_adjustment' in filename:
+            plotfile_name = '%s_before_adjustment'
+        else:
+            plotfile_name = '%s_after_adjustment'
 
-    # post_process_grid = save_obj.save_subgrid(saved_gpis,
-    #                                          'breaktest_grid.nc',
-    #                                          'Breaktest')  # Save test gpis subset to gridfile
+        # TODO: Parallelise this
+        save_obj.make_global_file(filepath=workfolder,
+                                  filename=filename,
+                                  fill_nan=False,
+                                  mfdataset=False,
+                                  keep_cell_files=True,
+                                  drop_variables=None,
+                                  global_meta_dict=global_meta,
+                                  var_meta_dicts=var_meta)  # Merge test result cell files to global file
 
-    log_file.add_line('Merged files to global file: %s' % global_file_name)
-    '''
-    for i, image_file in enumerate(image_files_names, start=1):  # Create spatial plots from test results and coverage
-        log_file.add_line('  NC Image File %i : %s' % (i, image_file))
-        meta = show_processed_gpis(workfolder, 'test', image_file)
-        log_file.add_line('  Test Results Plot %i : %s' % (i, str(meta)))
-        stats = inhomo_plot_with_stats(workfolder, image_file)
-        log_file.add_line('  Test Results Plot %i : %s' % (i, str(meta)))
-    fn_long_per_plot = longest_homog_period_plots(workfolder)  # Create plot of longest homogeneous period
-    log_file.add_line('  Plot of Longest Homogeneous Period : %s' % fn_long_per_plot)
+        log_file.add_line('Merged cell files to global netcdf file: %s' % filename)
 
-    if perform_adjustment:
-        for i, image_file in enumerate(image_files_names, start=1):
-            log_file.add_line('  Adjusment coverage Plot %i : %s' % (i, str(stats)))
-            meta = show_processed_gpis(workfolder, 'adjustment', image_file)
-    '''
+        #TODO: Put this in the plotting functions
+        if not os.path.isdir(os.path.join(workfolder, global_images_folder_name)):
+            os.mkdir(os.path.join(workfolder, global_images_folder_name))
+
+        image_plots_path = os.path.join(workfolder, global_images_folder_name)
+
+        if 'test_results' in filename:
+            inhomo_plot_with_stats(os.path.join(workfolder, filename), image_plots_path,
+                                   plotfile_name % 'TEST_RESULT')
+
+            log_file.add_line('Nice Test Results Plots for %s as %s with meta data: %s' % (filename,
+                                                                                           plotfile_name,
+                                                                                     str(var_meta['test_results'])))
+
+            show_processed_gpis(os.path.join(workfolder, filename), image_plots_path,
+                                'test_status', plotfile_name % 'TEST_STATUS')
+
+            log_file.add_line('Nice Test Status Plots for %s as %s with meta data: %s' % (filename,
+                                                                                          plotfile_name,
+                                                                                    str(var_meta['test_status'])))
+        elif 'lin_model_params' in filename:
+            show_processed_gpis(os.path.join(workfolder, filename), image_plots_path,
+                                'adjustment_status', plotfile_name % 'ADJUSTMENT_STATUS')
+
+
+            log_file.add_line('Nice Adjustment Status Plots for %s as %s with meta data: %s' % (filename,
+                                                                                                plotfile_name,
+                                                                                          str(var_meta['adjustment_status'])))
+
+    return
+
 
 
 if __name__ == '__main__':
@@ -397,8 +453,8 @@ if __name__ == '__main__':
 
     start('CCI_41_COMBINED',
           'merra2',
-          r'D:\users\wpreimes\datasets\HomogeneityTesting_data',
-          cells_identifier=[2318],  # 'global', a continent or a list of cells
+          r'D:\users\wpreimes\datasets\HomogeneityTesting_data',#''/data-write/USERS/wpreimes/HomogeneityTesting_data',
+          cells_identifier=[2244],  # 'global', a continent or a list of cells
           skip_times=None,  # list of breaktimes to skip
           anomaly=False,  # False, timeframe or ccirange
           save_adjusted_data=True,

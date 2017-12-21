@@ -104,14 +104,19 @@ def valid_months_plot(workdir, cells_identifier, testproduct, refproduct, resamp
     for process in processes:
         process.join()
 
-    save_obj.make_global_file(workdir, keep_cell_files=True)
+    save_obj.make_global_file(workdir,
+                              'temp_coverage.nc',
+                              True,
+                              False,
+                              True,
+                              None)
 
 
 
 
 if __name__ == '__main__':
     valid_months_plot(r'D:\users\wpreimes\datasets\HomogeneityTesting_data\cci41_validmonths',
-                      'Australia',
+                      'global',
                       'CCI_41_COMBINED',
                       'merra2',
                       'M',

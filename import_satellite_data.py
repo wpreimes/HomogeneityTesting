@@ -405,12 +405,13 @@ class QDEGdata_3H(object):
 if __name__ == '__main__':
     from grid_functions import cells_for_continent
     import matplotlib.pyplot as plt
+    from smecv_grid.grid import SMECV_Grid_v042
+    for gpi in SMECV_Grid_v042().grid_points_for_cell([2351])[0]:
+        timeframe = [datetime(1980,10,26), datetime(2016,1,1)]
+        data = QDEGdata_D(products=['CCI_41_COMBINED','CCI_41_COMBINED_ADJUSTED'])
+        ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
+        ts['Q'] = ts['CCI_41_COMBINED']-ts['CCI_41_COMBINED_ADJUSTED']
+        ts[['CCI_41_COMBINED','CCI_41_COMBINED_ADJUSTED','Q']].plot()
+        plt.show()
 
-    gpi = 428978
-    timeframe = [datetime(1990,10,26), datetime(2010,1,1)]
-    data = QDEGdata_D(products=['gldas_v20','CCI_41_COMBINED','merra2'])
-    ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
-    print ts
-
-    #start('CCI_33_COMBINED', 'merra2', '/data-write/USERS/wpreimes/HomogeneityTesting_data', cells=[777], skip_times = None, anomaly = False, perform_adjustment = False, parallel_processes = 1)
 

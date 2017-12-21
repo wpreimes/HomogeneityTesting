@@ -23,6 +23,9 @@ from multiprocessing import Pool
 from otherfunctions import split
 from multiprocessing import Process, Queue
 import matplotlib.dates as mdates
+from save_data import RegularGriddedCellData
+from grid_functions import split_cells
+
 
 
 def calc_scatter_stats(Err0, Err1):
@@ -187,6 +190,12 @@ class Trends(BreakTestData):
                 axs[i].set_ylim([ymin, ymax])
                 axs[i].set_title(col_name)
 
+        if plotit and any(return_df.loc['trend'].values)==True:
+            print return_df
+            plt.show()
+        else:
+            plt.close()
+
         return return_df
 
     def adjusted_gpis(self, breaktest_grid_path):
@@ -194,39 +203,17 @@ class Trends(BreakTestData):
         return grid.get_grid_points()[0]
 
 
-def calc_trends(out_dir, testdata_name, refdata_name, starttime, endtime, cells='global', gpis=False):
-    plotit = True
-    grid = SMECV_Grid_v042()
 
-
-    if cells == 'global':
-        cells = grid.get_cells()
-    elif any(isinstance(cell,str) for cell in cells):
-        cells = cells_for_continent(cells)
-    grid = grid.subgrid_from_cells(cells)
-
-    Trends_obj = Trends(testdata_name, refdata_name, False, False)
-    concat_df = []
-
-    if cells:
-        grid = grid.subgrid_from_cells(cells)
-    if gpis:
-        grid = grid.subgrid_from_gpis(gpis)
-
-    for i, cell in enumerate(grid.get_cells(), start=1):
-        DF_Cell = pd.DataFrame(index=grid.grid_points_for_cell(cell)[0], columns=['lat', 'lon'])
-        DF_Cell['lat'] = grid.grid_points_for_cell(cell)[2]
-        DF_Cell['lon'] = grid.grid_points_for_cell(cell)[1]
-
-        print('iteration %i of %i' % (i, len(cells)))
-
-        for gpi in grid.grid_points_for_cell(cell)[0]:
+def process_for_cells(q, grid, cells, Trends_obj, save_obj, starttime, endtime, testdata_name, refdata_name, plotit, process_no):
+    for icell, cell in enumerate(cells):
+        print 'Processing QDEG Cell %i (iteration %i of %i)' % (cell, icell + 1, len(cells))
+        for iteration, gpi in enumerate(grid.grid_points_for_cell(cell)[0]):
             print gpi
             try:
                 DF_Time = Trends_obj.read_gpi(gpi)
                 DF_Time = DF_Time[starttime:endtime]
                 DF_Time = Trends_obj.temp_resample(DF_Time, '3M')
-                #TODO: deactivate correction
+                # TODO: deactivate correction
                 DF_Time['refdata'] = Trends_obj.ref_data_correction(DF_Time[['testdata', 'refdata']])
                 DF_Time = DF_Time.rename(columns={'testdata': testdata_name, 'refdata': refdata_name})
             except:
@@ -243,64 +230,88 @@ def calc_trends(out_dir, testdata_name, refdata_name, starttime, endtime, cells=
             # print theilsen_params
             # print mannkendall_params
 
+            data_dict = {}
             for name in [testdata_name, refdata_name]:
-                DF_Points = DF_Points.set_value(gpi, '%s_significant_trend_mask' % name,
-                                                1 if mka_results.loc['trend', name ] == True else 0)
-                DF_Points = DF_Points.set_value(gpi, '%s_slope_theilsen' % name,
-                                                theilsen_results.loc['medslope', name])
-                DF_Points = DF_Points.set_value(gpi, '%s_slope_lin' % name,
-                                                mka_results.loc['slope', name])
-                DF_Points = DF_Points.set_value(gpi, '%s_p_mannkendall' % name,
-                                                mka_results.loc['p', name])
-                DF_Points = DF_Points.set_value(gpi, '%s_slope_lin_significant' % name,
-                                                mka_results.loc['slope', name] if mka_results.loc['trend', name ] == True else np.nan)
+                data_dict['%s_significant_trend_mask' % name] = 1 if mka_results.loc['trend', name] == True else 0
+                #data_dict['%s_slope_theilsen' % name] = theilsen_results.loc['medslope', name]
+                data_dict['%s_slope_lin' % name] = mka_results.loc['slope', name]
+                data_dict['%s_p_mannkendall' % name] = mka_results.loc['p', name]
+                data_dict['%s_slope_lin_significant' % name] = mka_results.loc['slope', name] if mka_results.loc[
+                                                                                                  'trend', name] == True else np.nan
+
+            save_obj.add_data(data_dict, gpi, time=datetime(1900,1,1))
+
+    q.put(True)
+
+def calc_trends(out_dir, testdata_name, refdata_name, starttime, endtime, cells_identifier, plotit, parallel_processes):
+
+    if parallel_processes != 1 and plotit:
+        plotit=False
+
+    grid = SMECV_Grid_v042()
+
+    save_obj = RegularGriddedCellData(os.path.join(out_dir, 'temp_cellfiles', testdata_name),
+                                      grid,
+                                      [datetime(1900,1,1)])
+
+    Trends_obj = Trends(testdata_name, refdata_name, False, False)
 
 
-        concat_df.append(DF_Points)
+    cells = list(
+        split(split_cells(cells_identifier, SMECV_Grid_v042()), parallel_processes))  # split cells for processes
 
-    DF_Points = pd.concat(concat_df)
-    DF_Points['location_id'] = DF_Points.index.astype(int)
+    processes = []
+    q = Queue()
+    finished_processes = []
 
-    DF_Points = DF_Points.sort_values(['lat', 'lon']) \
-        .set_index(['lat', 'lon'])
-    global_image = DF_Points.to_xarray()
-    global_image.to_netcdf(os.path.join(out_dir, 'trends_%s_%s.nc' % (refdata_name, testdata_name)))
+    for process_no in range(parallel_processes):
+        cells_for_process = cells[process_no]
+        p = Process(target=process_for_cells, args=(q,
+                                                    grid,
+                                                    cells_for_process,
+                                                    Trends_obj,
+                                                    save_obj,
+                                                    starttime,
+                                                    endtime,
+                                                    testdata_name,
+                                                    refdata_name,
+                                                    plotit,
+                                                    process_no))
+        processes.append(p)
+        p.start()
+
+    for process in processes:
+        finished_processes.append(q.get(True))
+
+    for process in processes:
+        process.join()
+
+    global_file_name = save_obj.make_global_file(out_dir,
+                                                 'GLOBAL_%s_Trends.nc' % testdata_name,
+                                                 False, False,
+                                                 keep_cell_files=True)
+    return
 
 
-
-def main(multicore=True):
-    cells = ['Australia']
+def main():
     out_dir = r'D:\users\wpreimes\datasets\CCITrends_output'
-    parallel_processes=1
+    starttime = datetime(1988, 1, 1)
+    endtime = datetime(2010, 12, 31)
 
-    starttime = datetime(1980, 1, 1)
-    endtime = datetime(2016, 12, 31)
-
-    slope_names = ['mannkendall']
-    refdata_names = ['merra2']
-    testdata_names = ['CCI_41_COMBINED', 'CCI_41_COMBINED_ADJUSTED']
-    files_path = r"D:\users\wpreimes\datasets\CCITrends_output"
+    refdata_names = ['CCI_41_COMBINED']
+    testdata_names = ['CCI_41_COMBINED_ADJUSTED']
 
     for refdata_name in refdata_names:
         for testdata_name in testdata_names:
-            calc_trends(out_dir, testdata_name, refdata_name, starttime, endtime, cells='United_States', gpis=None)
+            calc_trends(out_dir=out_dir,
+                        testdata_name=testdata_name,
+                        refdata_name=refdata_name,
+                        starttime=starttime,
+                        endtime=endtime,
+                        cells_identifier=[2282],
+                        plotit=True,
+                        parallel_processes=1)
 
-
-
-
-
-
-
-if __name__ == "__main__":
-
+if __name__ == '__main__':
     main()
 
-
-    '''
-    for refdata_name in refdata_names:
-        for testdata_name in testdata_names:
-            for slope_name in slope_names:
-                path = os.path.join(files_path,"trends_merra2_%s.nc" %testdata_name)
-
-                fig1 = scatter_trends(path, testdata_name, refdata_name, slope_name, save_path=files_path)
-    '''

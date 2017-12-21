@@ -12,6 +12,7 @@ import os
 import matplotlib.pyplot as plt
 
 
+
 class LinearAdjustment(object):
     def __init__(self, data, breaktime,
                  adjust_part='first', adjust_param='both', model_plots=False, maxplotiter=4):
@@ -47,6 +48,8 @@ class LinearAdjustment(object):
                             'InterceptDiff': self.intercept_diff,
                             'Slope_before_break': self.B[0, 0],
                             'Intercept_before_break': self.B[1, 0],
+                            'MeanDiff_timeframes_testdata': self.mean_before - self.mean_after,
+                            'VarRatio_timeframes_testdata': self.var_before / self.var_after,
                             'Slope_after_break': self.B[0, 1],
                             'Intercept_after_break': self.B[1, 1],
                             'NormalizedResidualsSquareSum_before_break': self.norm_residuals_square_sums[0],
@@ -106,6 +109,7 @@ class LinearAdjustment(object):
             raise Exception("select 'first' or 'last' for part to adjust")
 
     def lms_model(self):
+        #TODO: implement Lest Median Square adjustment for monthly values?
         pass
 
     def regress_model(self, data='M'):
@@ -138,6 +142,13 @@ class LinearAdjustment(object):
             testdata = data['testdata']
             refdata = data['refdata']
 
+            if i == 0:
+                self.mean_before = np.nanmean(testdata.values)
+                self.var_before = np.nanvar(testdata.values)
+            else:
+                self.mean_after = np.nanmean(testdata.values)
+                self.var_after = np.nanvar(testdata.values)
+
             r, p = stats.pearsonr(refdata.values, testdata.values)
             rval.append(r)
             pval.append(p)
@@ -149,8 +160,9 @@ class LinearAdjustment(object):
                 raise Exception('3: positive corr %s not significant (%s)' % ('before breaktime' if i==0  else 'after breaktime',
                                                                               str(pval)))
 
+            #TODO: own function?
             n = len(testdata)
-            X = np.transpose(np.stack(( data['refdata'].values, np.ones(data['refdata'].values.size))))
+            X = np.transpose(np.stack(( data['refdata'].values, np.ones(n)))) # np.ones(data['refdata'].values.size)
             N = np.dot(np.transpose(X), X)
             try:
                 b = np.dot(np.dot(np.linalg.inv(N), np.transpose(X)), testdata.values)
@@ -162,8 +174,8 @@ class LinearAdjustment(object):
             #if i==0:
             #    order_sq_e = np.argsort(e**2) # last index is element with largest squared residual of group1
 
-           #TODO: Check the residuals and rerun the modelling if some residuals are too large
-           # self.check_residuals(testdata, e, breaktime)
+            #TODO: Check the residuals and rerun the modelling if some residuals are too large
+            # self.check_residuals(testdata, e, breaktime)
 
             norm_residuals_square_sums.append(np.sum(np.square(e))/len(e))
             max_abs_residuals.append(max(abs(e)))
@@ -201,8 +213,8 @@ class LinearAdjustment(object):
 
 
 
-        self.B = np.matrix([[B_dict['b0'][0], B_dict['b1'][0]],
-                            [B_dict['b0'][1], B_dict['b1'][1]]])
+        self.B = np.matrix([[B_dict['b0'][0], B_dict['b1'][0]],         # Reform B to form [k1, k2,
+                            [B_dict['b0'][1], B_dict['b1'][1]]])        #                   d1, d2]
         self.corr = {'R': rval, 'p': pval}
         self.norm_residuals_square_sums = norm_residuals_square_sums
         self.max_abs_residuals = max_abs_residuals
@@ -266,34 +278,19 @@ class LinearAdjustment(object):
             raise Exception("Select 'first' , 'last' or 'both' for part to return")
 
 
-    def extract_adjust_infos(self, data_dict):
-        #TODO: Delete this
-        # type: (dict) -> dict
-        status = int(data_dict['adj_status'][0])
-        if status not in [0]:
-            return {'slope': np.nan, 'intercept': np.nan,
-                    'k1_before': np.nan, 'k2_before': np.nan,
-                    'd1_before': np.nan, 'd2_before': np.nan,
-                    'k1_after': np.nan, 'k2_after': np.nan,
-                    'd1_after': np.nan, 'd2_after': np.nan,
-                    'adj_status': status}
-        else:
-            data_dict['adj_status'] = status
 
-            return data_dict  # DataDict from Adjustment incl. status
-
-    def get_meta(self):
-        adjustment_meta = {0 : 'no adjustment performed (initial)',
-                           1 : 'adjusted data for time frame saved',
-                           2 : 'negative correlation',
-                           3 : 'positive correlation not significant',
-                           4 : 'max number of iterations reached',
-                           5 : 'max. iter. reached w.o improvements',
-                           6 : 'N Matrix singular',
-                           7 : ' ',
-                           8 : 'adjusted Data is not being stored',
-                           9 : ' '}
-        return adjustment_meta
+def get_adjustment_meta():
+    status_meta = {'0' : 'no adjustment performed (initial)',
+                   '1' : 'adjusted data for time frame saved',
+                   '2' : 'negative correlation',
+                   '3' : 'positive correlation not significant',
+                   '4' : 'max number of iterations reached',
+                   '5' : 'max. iter. reached w.o improvements',
+                   '6' : 'N Matrix singular',
+                   '7' : ' ',
+                   '8' : 'adjusted Data is not being stored',
+                   '9' : ' '}
+    return status_meta
 
 
 if __name__=='__main__':

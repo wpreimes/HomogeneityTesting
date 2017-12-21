@@ -10,20 +10,23 @@ import pygeogrids as grids
 import xarray as xr
 import os
 from datetime import datetime
+import rsdata.root_path as root
+from smecv_grid.grid import SMECV_Grid_v042
 
 class LogFile(object):
-    def __init__(self, workfolder, initial_parameters):
+    def __init__(self, workfolder, initial_parameters=None):
         # type: (str, dict) -> None
         self.workfolder = workfolder
         self.log_path = os.path.join(self.workfolder, 'log.txt')
-
-        with open(self.log_path, 'w') as f:
-            f.write('Log file for HomogeneityTesting \n')
-            f.write('=====================================\n')
-            for name, val in initial_parameters.iteritems():
-                f.write('%s: %s \n' % (name, str(val)))
-            f.write('=====================================\n')
-            f.write('\n')
+        if not os.path.isfile(self.log_path):
+            with open(self.log_path, 'w') as f:
+                if initial_parameters:
+                    f.write('Log file for HomogeneityTesting \n')
+                    f.write('=====================================\n')
+                    for name, val in initial_parameters.iteritems():
+                        f.write('%s: %s \n' % (name, str(val)))
+                    f.write('=====================================\n')
+                    f.write('\n')
 
 
     def add_line(self, string):
@@ -242,8 +245,9 @@ class RegularGriddedCellData(object):
             os.remove(os.path.join(self.cell_files_path, file))
         os.rmdir(os.path.join(self.cell_files_path))
 
+
     def make_global_file(self, filepath=None, filename= 'global.nc', fill_nan=True, mfdataset=False,
-                         keep_cell_files=False, drop_variables=None):
+                         keep_cell_files=False, drop_variables=None, global_meta_dict = None, var_meta_dicts=None):
         '''
         Merge all cell files in the cell files path to a global netcdf image file.
         :param filepath: string
@@ -278,7 +282,8 @@ class RegularGriddedCellData(object):
             for i, cell in enumerate(self.grid.get_cells()):
                 cellfile_name = self.create_cellfile_name(cell=cell)
                 if os.path.isfile(cellfile_name):
-                    cell_data = xr.open_dataset(cellfile_name, autoclose=True, drop_variables=drop_variables)
+                    cell_data = xr.open_dataset(cellfile_name,
+                                                drop_variables=drop_variables)
                 else:
                     self.cell_data_cell = cell
                     empty_cell_data = self.load_cell_data(cell, 'frame')
@@ -291,29 +296,50 @@ class RegularGriddedCellData(object):
                     cell_data.to_netcdf(glob_file)
                 else:
                     try:
-                        global_data = xr.open_dataset(glob_file, autoclose=True)
-                        global_data_new = xr.merge([global_data.copy(), cell_data.copy()])
-                        global_data.close()
+                        with xr.open_dataset(glob_file, autoclose=True) as global_data:
+                            global_data_new = xr.merge([global_data, cell_data])
+                            global_data_save = global_data.copy(deep=True)
                         global_data_new.to_netcdf(glob_file, mode='w')
-                        #global_data_new.to_netcdf(glob_file, mode='w')
                     except:
+                        global_data_save.to_netcdf(glob_file, mode='w')
                         print('Could not merge file for cell %s to global file' % cell)
-                        continue
+                cell_data.close()
+
+
+        if global_meta_dict:
+            with xr.open_dataset(glob_file) as global_data:
+                global_data_save = global_data.copy(deep=True)
+                global_data_save.attrs = global_meta_dict
+            global_data_save.to_netcdf(glob_file, mode='w')
+
+        if var_meta_dicts:
+            with xr.open_dataset(glob_file) as global_data:
+                global_data_save = global_data.copy(deep=True)
+            for varname, var_meta in var_meta_dicts.iteritems():
+                if varname in global_data.variables:
+                    global_data_save[varname].attrs = var_meta
+            global_data_save.to_netcdf(glob_file, mode='w')
+
 
         if not keep_cell_files:
             self.empty_temp_files()
 
+        return
+
 def test_simple_adding():
+
+    from smecv_grid.grid import SMECV_Grid_v042
+	
     grid = SMECV_Grid_v042()
     global_grid = grids.genreg_grid(0.25, 0.25).to_cell_grid(5)
 
     cells = [2137, 2173, 2209]
-    path = r'C:\Temp\ncwrite'
+    path = os.path.join(root.u, 'test')
 
     times = pd.DatetimeIndex(start='2000-01-01', end='2000-01-3', freq='D')
 
     # dimensions
-    celldata = RegularGriddedCellData(grid, path, [t for t in times])
+    celldata = RegularGriddedCellData(path, grid, [t for t in times])
 
     for cell in cells:
         gpis, lons, lats = grid.grid_points_for_cell(cell)
@@ -326,22 +352,25 @@ def test_simple_adding():
 
                 celldata.add_data(data_dict, gpi=gpi, time=time)
 
-    celldata.make_global_file()
+    celldata.make_global_file(meta_dicts={'var1':{'m1':1, 'm2':2}})
 
 if __name__ == '__main__':
     from cci_timeframes import CCITimes
     from smecv_grid.grid import SMECV_Grid_v042
+    from interface import get_test_meta
+    from adjustment import get_adjustment_meta
 
 
-    workfolder = r'D:\users\wpreimes\datasets\HomogeneityTesting_data\v21'
+    workfolder =r'D:\users\wpreimes\datasets\HomogeneityTesting_data\v38'
     test_prod = 'CCI_41_COMBINED'
     skip_times = None
     save_adjusted_data = True
     times_obj = CCITimes(test_prod, ignore_position=True,
                          skip_times=skip_times)
-    results = ['test_results_before_adjustment', 'lin_model_params_before_adjustment']
-    if save_adjusted_data:
-        results = results + ['test_results_after_adjustment', 'lin_model_params_after_adjustment']
+    results = ['test_results_before_adjustment',
+               'lin_model_params_before_adjustment',
+               'test_results_after_adjustment',
+               'lin_model_params_after_adjustment']
     save_objects = dict.fromkeys(results)
     for name in save_objects.keys():
         save_objects[name] = RegularGriddedCellData(grid=SMECV_Grid_v042(),
@@ -349,9 +378,15 @@ if __name__ == '__main__':
                                                     times=times_obj.get_times(None, as_datetime=True)['breaktimes'],
                                                     resolution=(0.25, 0.25))
     for name, save_obj in save_objects.iteritems():
-        if name not in ['lin_model_params_after_adjustment']: continue
+        #if name != 'lin_model_params_after_adjustment':continue
         filename = 'GLOBAL_' + name + '.nc'
-        save_obj.make_global_file(workfolder, filename, False, False, True, 'adj_status')
+        var_meta = {'test_results': get_test_meta()[0],
+                     'test_status': get_test_meta()[1],
+                     'adjustment_status': get_adjustment_meta()}
+        global_meta = {'test_prod': 'CCI_41_COMBINED',
+                       'ref_prod': 'merra2'}
+
+        save_obj.make_global_file(workfolder, filename, False, False, True, None,global_meta, var_meta)
 
 
 

@@ -33,6 +33,14 @@ def grid_points_for_cells(grid, cells):
             grid_points+=np.ndarray.tolist(grid.grid_points_for_cell(cell)[0])
         return grid_points
 
+def split_cells(cells_identifier, grid):
+    if cells_identifier == 'global':
+        cells = grid.get_cells()
+    elif isinstance(cells_identifier, str):
+        cells = cells_for_continent(cells_identifier)
+    else:
+        cells = cells_identifier
+    return cells
 
 if __name__ == '__main__':
     cells = cells_for_continent('United_States')

@@ -265,14 +265,14 @@ class BreakTestData(object):
         return data['bias_corr_refdata']
 
     @staticmethod
-    def filter_by_quantiles(df_in, lower=0.1, upper=.9):
+    def filter_by_quantiles(df_in, lower=.1, upper=.9):
         '''
         Mask data outside of the definded quantile range
         '''
         df = df_in.copy()
         upper_threshold = df.quantile(upper)
         lower_threshold = df.quantile(lower)
-        df.loc[:, 'diff_flag'] = np.nan
+        df.loc[:, 'diff_flag'] = 1 #privious: np.nan
         index_masked=df.query('Q < %f & Q > % f' % (upper_threshold, lower_threshold)).index
         #index_masked = df[(df[colname] < upper_threshold) & (df[colname] > lower_threshold)].index
         df.loc[index_masked, 'diff_flag'] = 0
@@ -305,7 +305,7 @@ class BreakTestData(object):
                                     axis=0)
 
         data['diff_flag'] = filter_mask
-        return data.loc[data['diff_flag'] == 0]
+        return data['diff_flag'], data.loc[data['diff_flag'] == 0]
 
 
 class BreakTestBase(BreakTestData):
@@ -532,6 +532,7 @@ class BreakTestBase(BreakTestData):
 
         for test in self.tests.values():
             restructured_results['h_%s' % test] = test_results[test]['h']
+            if np.isnan(restructured_results['h_%s' % test]): continue
             if self.fligner_approx in test_results[test]['stats'].keys():
                 stats = test_results[test]['stats'][self.fligner_approx]
                 restructured_results['z_%s' % test] = stats['z']
@@ -539,20 +540,20 @@ class BreakTestBase(BreakTestData):
                 stats = test_results[test]['stats']
             restructured_results['p_%s' % test] = stats['pval']
 
-        test_status = 0 # '0: Testing successful'
+        test_status = 1 # '1: Testing successful'
 
         if 'mean' in self.tests.keys():
             mean_test_result = restructured_results['h_%s' % self.tests['mean']]
             if np.isnan(mean_test_result):
                 test_status = 6 # '6: WK was selected but failed.'
-                restructured_results['h_%s' % self.tests['mean']] = 99
+                restructured_results['h_%s' % self.tests['mean']] = np.nan
         else:
             mean_test_result = np.nan
         if 'var' in self.tests.keys():
             var_test_result = restructured_results['h_%s' % self.tests['var']]
             if np.isnan(var_test_result):
                 test_status = 7 # '7: FK was selected but failed.'
-                restructured_results['h_%s' % self.tests['var']] = 99
+                restructured_results['h_%s' % self.tests['var']] = np.nan
         else:
             var_test_result = np.nan
 
@@ -614,20 +615,22 @@ class BreakTestBase(BreakTestData):
 
         return self.testresults
 
-    def get_meta(self):
-        test_meta = {1 : 'WK only',
-                     2 : 'FK only',
-                     3 : 'WK and FK',
-                     4 : 'None'}
-        status_meta = {0 : 'Not tested (initial)',
-                       1 : 'Testing successful',
-                       2 : 'No data for the selected timeframe',
-                       3 : 'Spearman correlation too low',
-                       4 : 'Min. Dataseries len. not reached',
-                       5 : 'neg/nan correl. aft. bias corr.',
-                       6 : 'WK was selected but failed',
-                       7 : 'FK was selected but failed',
-                       8 : 'WK test and FK test failed',
-                       9 : 'Could not import data for gpi'}
-        return test_meta, status_meta
+
+def get_test_meta():
+    results_meta = {'1' : 'WK only',
+                    '2' : 'FK only',
+                    '3' : 'WK and FK',
+                    '4' : 'None'}
+    status_meta = {'0' : 'Not tested (initial)',
+                   '1' : 'Testing successful',
+                   '2' : 'No data for the selected timeframe',
+                   '3' : 'Spearman correlation too low',
+                   '4' : 'Min. Dataseries len. not reached',
+                   '5' : 'neg/nan correl. aft. bias corr.',
+                   '6' : 'WK was selected but failed',
+                   '7' : 'FK was selected but failed',
+                   '8' : 'WK test and FK test failed',
+                   '9' : 'Could not import data for gpi'}
+
+    return results_meta, status_meta
 
