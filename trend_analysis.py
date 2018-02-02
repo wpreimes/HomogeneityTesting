@@ -18,94 +18,203 @@ import os
 import xarray as xr
 from mktest import mk_test
 from scipy import stats
-from preprocess import remove_outliers
 from multiprocessing import Pool
 from otherfunctions import split
 from multiprocessing import Process, Queue
 import matplotlib.dates as mdates
 from save_data import RegularGriddedCellData
 from grid_functions import split_cells
+from cci_timeframes import CCITimes
+from datetime import datetime
+
+from scipy.stats import linregress
+from nc_image_reading import RegularGriddedCellData_Reader
+
+class PlotTrends(object):
+    def __init__(self, trends_file, homogtest_file, testdata_name, refdata_name, only_significant_trends, outlier_filter_trends=None):
+        self.trends_file = RegularGriddedCellData_Reader(trends_file)
+        if homogtest_file:
+            self.homogtest_file = RegularGriddedCellData_Reader(homogtest_file)
+        else:
+            self.homogtest_file = None
+        self.outlier_filter_trends = outlier_filter_trends
+        self.testdata_name = testdata_name
+        self.refdata_name = refdata_name
+        self.only_significant = only_significant_trends
+
+    @staticmethod
+    def remove_outliers(column_in, b, t, as_array=False):
+        '''
+        Removes all data from a dataframe column above and below the selected
+        percentiles
+
+        Parameters
+        ---------
+        column: pandas dataframe column to filter
+
+        b: bottom percentile in % (0-100)
+        t: top percentile in % (0-100)
+        Returns
+        ---------
+        column: The filtered data column
+
+        points: a list of points which where removed during filtering
+        '''
+        column = column_in.copy(True).dropna()
+        toppercentile = np.nanpercentile(column, t)
+        bottompercentile = np.nanpercentile(column, b)
+        points = column[(column > toppercentile) | (column < bottompercentile)].index.values
+        size = points.size
+        column[(column > toppercentile) | (column < bottompercentile)] = np.nan
+        print 'Removed %i values using percentiles(%i and %i): %f and %f' % (
+        size, b, t, bottompercentile, toppercentile)
+        return column
 
 
+    def load_trends(self, time):
+        if self.only_significant:
+            slope_var = 'slope_lin_significant'
+        else:
+            slope_var = 'slope_lin'
+        DF_Points_from_file = self.trends_file.read(time, ['%s_%s' % (self.testdata_name, slope_var),
+                                                     '%s_%s' % (self.refdata_name, slope_var)]).dropna()
+        if self.outlier_filter_trends:
+            b, t = self.outlier_filter_trends[0], self.outlier_filter_trends[1]
+            for col in DF_Points_from_file:
+                DF_Points_from_file[col] = self.remove_outliers(DF_Points_from_file[col], b, t)
 
-def calc_scatter_stats(Err0, Err1):
-    from scipy.stats import linregress
-    RMSD = np.sqrt(np.nanmean(Err1 - Err0) ** 2)
-    Bias = np.nanmean(Err1) - np.nanmean(Err0)
-
-    mask1 = ~np.isnan(Err1) & ~np.isnan(Err0)
-    R = stats.pearsonr(Err0[mask1], Err1[mask1])
-    slope = linregress(Err0[mask1], Err1[mask1])
-    return RMSD, Bias, slope, R
-
-
-def scatter_trends(ncfiles, testdata_name, refdata_name,slope_name, save_path=None,
-                   regressionline=True, oneoneline=True, box_pos='tl'):
-    '''
-    Plot scatter plots of trends from saved nc files
-    :param nc_files:
-    :return:
-    '''
-    p = []
-    if box_pos[0] == 't':
-        p.append(0.9)
-    elif box_pos[0] == 'b':
-        p.append(0.1)
-    else:
-        return 'Position is not tl,tr,bl or br'
-
-    if box_pos[1] == 'r':
-        p.append(0.9)
-    elif box_pos[1] == 'l':
-        p.append(0.2)
-    else:
-        return 'Position is not tl,tr,bl or br'
-    concat_df = []
-    for ncfile in ncfiles:
-        ncfile = xr.open_dataset(ncfile)
-        concat_df.append(ncfile.to_dataframe().reset_index(inplace=False).set_index(['location_id']))
-    DF_Points_from_file = pd.concat(concat_df)
-    DF_Points_from_file = DF_Points_from_file.loc[DF_Points_from_file.index.dropna()]
-
-    DF_Points_from_file = DF_Points_from_file[['%s_slope_%s' % (testdata_name, slope_name),
-                                               '%s_slope_%s' % (refdata_name, slope_name)]].dropna()
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    x = remove_outliers(DF_Points_from_file['%s_slope_%s' % (testdata_name, slope_name)],
-                        5, 95)[0].values
-    y = remove_outliers(DF_Points_from_file['%s_slope_%s' % (refdata_name, slope_name)],
-                        5, 95)[0].values
-    RMSD, Bias, slope, R = calc_scatter_stats(x, y)
-    hb = ax.hexbin(x, y,
-                   gridsize=100, bins='log', cmap='Reds', mincnt=1)
-    # ax.axis([np.nanmin(x), np.nanmax(x), np.nanmin(y), np.nanmax(y)])
+        return DF_Points_from_file.rename(columns={'%s_%s' % (self.testdata_name, slope_var): 'slope_%s' % self.testdata_name,
+                                                   '%s_%s' % (self.refdata_name, slope_var): 'slope_%s' % self.refdata_name})
 
 
-    title = "%s Trends %s vs. refdata" % (slope_name, testdata_name)
-    ax.set_title(title)
-    cb = fig.colorbar(hb, ax=ax)
-    cb.set_label('log10(N)')
+    def load_breaks(self, time):
+        DF_Points_from_file = self.homogtest_file.read(time, ['test_results']).dropna()
+        return DF_Points_from_file
 
-    plt.axvline(0, color='black', alpha=0.3)
-    plt.axhline(0, color='black', alpha=0.3)
 
-    ax.text(p[1], p[0], 'RMSD:%f\n' % RMSD + \
-            'Bias:%f\n' % Bias + \
-            'R:%f' % R[0], horizontalalignment='center', backgroundcolor='white', verticalalignment='center',
-            transform=ax.transAxes)
+    @staticmethod
+    def calc_scatter_stats(Err0, Err1):
 
-    if regressionline == True:
-        ax.plot(x, slope[0] * x + slope[1], linestyle='-', color='blue', linewidth=2)
+        N = Err0.size if Err0.size == Err1.size else np.nan
+        RMSD = np.sqrt(np.nanmean(Err1 - Err0) ** 2)
+        Bias = np.nanmean(Err1) - np.nanmean(Err0)
 
-    if save_path:
-        fig.savefig(os.path.join(save_path, title + '.png'))
-        plt.close()
+        mask1 = ~np.isnan(Err1) & ~np.isnan(Err0)
+        R = stats.pearsonr(Err0[mask1], Err1[mask1])
+        slope = linregress(Err0[mask1], Err1[mask1])
+        return N, RMSD, Bias, slope, R
 
-    else:
-        plt.show()
+    @staticmethod
+    def boxposition(box_pos):
+        p = []
+        if box_pos[0] == 't':
+            p.append(0.85)
+        elif box_pos[0] == 'b':
+            p.append(0.15)
+        else:
+            return 'Position is not tl,tr,bl or br'
 
-    return fig
+        if box_pos[1] == 'r':
+            p.append(0.85)
+        elif box_pos[1] == 'l':
+            p.append(0.25)
+        else:
+            return 'Position is not tl,tr,bl or br'
 
+        return p
+
+    def scatter_trends(self, starttime, out_path=None,
+                       regressionline=True, oneoneline=True, at='breaks', box_pos='tl', scale='log'):
+        '''
+        :param starttime: datetime
+            Time to read image from netcdf file
+        :param out_path: str
+            Path to save the plot to
+        :param regressionline: bool
+            Add a regression line to the scatter plot
+        :param oneoneline: bool
+            Add a 1:1 line to the scatter plot
+        :param at: str
+            'breaks' to make scatter plot for trends where breaks were found
+        :param box_pos: str
+            Position of stats-box in the scatter plot
+        :return:
+        '''
+
+        trends = self.load_trends(starttime)
+        print starttime
+        if at == 'breaks':
+            if not self.homogtest_file: raise Exception('No break test file passed')
+            test_results = self.load_breaks(starttime).dropna()
+            index_pos = test_results.loc[test_results['test_results']!=4.,:].index
+        elif at == 'nobreaks':
+            if not self.homogtest_file: raise Exception('No break test file passed')
+            test_results = self.load_breaks(starttime).dropna()
+            index_pos = test_results.loc[test_results['test_results']==4.,:].index
+        elif at == 'all':
+            test_results = None
+            index_pos = trends.index
+        else:
+            raise Exception("Select 'breaks' or 'all' for parameter 'at' ")
+
+        trends = trends.loc[index_pos]
+        x = trends['slope_%s' % self.testdata_name]
+        y = trends['slope_%s' % self.refdata_name]
+
+        p = self.boxposition(box_pos)
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+
+        N, RMSD, Bias, slope, R = self.calc_scatter_stats(trends['slope_' + self.testdata_name].values,
+                                                          trends['slope_'+ self.refdata_name].values)
+
+        if scale == 'log':
+            hb = ax.hexbin(x, y,
+                           gridsize=100, bins='log', cmap='Reds', mincnt=1)
+        else:
+            hb = ax.hexbin(x, y,
+                           gridsize=100, cmap='Reds', mincnt=1)
+
+
+        '''
+        max_x = np.nanmax(np.abs(x))
+        max_y = np.nanmax(np.abs(y))
+        max_x = 0.006
+        max_y = 0.006
+        ax.set_xlim([max_x * -1, max_x])
+        ax.set_ylim([max_y * -1, max_y]) #TODO: change to +-0.1?? #TODO: change to +-0.1??
+        #max = np.max(max_x, max_y)
+        '''
+        # ax.axis([np.nanmin(x), np.nanmax(x), np.nanmin(y), np.nanmax(y)])
+
+
+        title = "%s Trends vs. %s Trends" % (self.testdata_name, self.refdata_name)
+        ax.set_title(title)
+        ax.set_xlabel(self.testdata_name)
+        ax.set_ylabel(self.refdata_name)
+        cb = fig.colorbar(hb, ax=ax)
+        cb.set_label('log10(N)')
+
+        plt.axvline(0, color='black', alpha=0.3)
+        plt.axhline(0, color='black', alpha=0.3)
+
+        ax.text(p[1], p[0], 'RMSD:%f\n' % RMSD + \
+                'N:%i\n' % N + \
+                'R:%f' % R[0], horizontalalignment='center', backgroundcolor='white', verticalalignment='center',
+                transform=ax.transAxes, fontsize=15)
+
+        if regressionline == True:
+            ax.plot(x, slope[0] * x + slope[1], linestyle='-', color='blue', linewidth=2)
+
+        plt.tight_layout()
+        if out_path:
+            fig.savefig(os.path.join(out_path, title + '(from '+str(starttime.date())+').png'))
+            plt.close()
+
+        else:
+            plt.show()
+
+        return fig
 
 class Trends(BreakTestData):
     def __init__(self, test_prod, ref_prod, anomaly, use_adjusted=False):
@@ -204,46 +313,49 @@ class Trends(BreakTestData):
 
 
 
-def process_for_cells(q, grid, cells, Trends_obj, save_obj, starttime, endtime, testdata_name, refdata_name, plotit, process_no):
+def process_for_cells(q, grid, cells, Trends_obj, save_obj, starttimes, endtimes, testdata_name, refdata_name, plotit, process_no):
     for icell, cell in enumerate(cells):
         print 'Processing QDEG Cell %i (iteration %i of %i)' % (cell, icell + 1, len(cells))
         for iteration, gpi in enumerate(grid.grid_points_for_cell(cell)[0]):
             print gpi
             try:
-                DF_Time = Trends_obj.read_gpi(gpi)
-                DF_Time = DF_Time[starttime:endtime]
-                DF_Time = Trends_obj.temp_resample(DF_Time, '3M')
-                # TODO: deactivate correction
-                DF_Time['refdata'] = Trends_obj.ref_data_correction(DF_Time[['testdata', 'refdata']])
-                DF_Time = DF_Time.rename(columns={'testdata': testdata_name, 'refdata': refdata_name})
+                DF_Time = Trends_obj.read_gpi(gpi).rename(columns={'testdata_original':'testdata'})
             except:
                 continue
-            try:
-                mka_results = Trends_obj.MannKendall(DF_Time, 0.05, plotit)
-                #theilsen_results = Trends_obj.TheilSenTrend(DF_Time, 0.05, plotit)
+            for starttime, endtime in zip(starttimes, endtimes):
+                try:
+                    df_time = DF_Time.loc[starttime:endtime]
+                    df_time = Trends_obj.temp_resample(df_time, '3M')
+                    # TODO: deactivate correction
+                    df_time['refdata_original'] = Trends_obj.ref_data_correction(df_time[['testdata', 'refdata_original']],
+                                                                        'refdata_original', False)
+                    df_time = df_time.rename(columns={'testdata': testdata_name, 'refdata_original': refdata_name})
 
-                # if not mannkendall_params.loc['p', testdata_name]<p_min: continue
-                # theilsen_params = Trends_obj.TheilSenTrend(DF_Time.dropna() if plotit else DF_Time, p_min, plotit)
-            except:
-                continue
+                    mka_results = Trends_obj.MannKendall(df_time, 0.05, plotit)
+                    #theilsen_results = Trends_obj.TheilSenTrend(DF_Time, 0.05, plotit)
 
-            # print theilsen_params
-            # print mannkendall_params
+                    # if not mannkendall_params.loc['p', testdata_name]<p_min: continue
+                    # theilsen_params = Trends_obj.TheilSenTrend(DF_Time.dropna() if plotit else DF_Time, p_min, plotit)
 
-            data_dict = {}
-            for name in [testdata_name, refdata_name]:
-                data_dict['%s_significant_trend_mask' % name] = 1 if mka_results.loc['trend', name] == True else 0
-                #data_dict['%s_slope_theilsen' % name] = theilsen_results.loc['medslope', name]
-                data_dict['%s_slope_lin' % name] = mka_results.loc['slope', name]
-                data_dict['%s_p_mannkendall' % name] = mka_results.loc['p', name]
-                data_dict['%s_slope_lin_significant' % name] = mka_results.loc['slope', name] if mka_results.loc[
-                                                                                                  'trend', name] == True else np.nan
+                # print theilsen_params
+                # print mannkendall_params
 
-            save_obj.add_data(data_dict, gpi, time=datetime(1900,1,1))
+                    data_dict = {}
+                    for name in [testdata_name, refdata_name]:
+                        data_dict['%s_significant_trend_mask' % name] = 1 if mka_results.loc['trend', name] == True else 0
+                        #data_dict['%s_slope_theilsen' % name] = theilsen_results.loc['medslope', name]
+                        data_dict['%s_slope_lin' % name] = mka_results.loc['slope', name]
+                        data_dict['%s_p_mannkendall' % name] = mka_results.loc['p', name]
+                        data_dict['%s_slope_lin_significant' % name] = mka_results.loc['slope', name] if mka_results.loc[
+                                                                       'trend', name] == True else np.nan
+
+                    save_obj.add_data(data_dict, gpi, time=datetime.strptime(starttime,'%Y-%m-%d'))
+                except:
+                    continue
 
     q.put(True)
 
-def calc_trends(out_dir, testdata_name, refdata_name, starttime, endtime, cells_identifier, plotit, parallel_processes):
+def calc_trends(out_dir, testdata_name, refdata_name, starttimes, endtimes, cells_identifier, plotit, parallel_processes):
 
     if parallel_processes != 1 and plotit:
         plotit=False
@@ -252,7 +364,7 @@ def calc_trends(out_dir, testdata_name, refdata_name, starttime, endtime, cells_
 
     save_obj = RegularGriddedCellData(os.path.join(out_dir, 'temp_cellfiles', testdata_name),
                                       grid,
-                                      [datetime(1900,1,1)])
+                                      times=[datetime.strptime(starttime,'%Y-%m-%d') for starttime in starttimes])
 
     Trends_obj = Trends(testdata_name, refdata_name, False, False)
 
@@ -271,8 +383,8 @@ def calc_trends(out_dir, testdata_name, refdata_name, starttime, endtime, cells_
                                                     cells_for_process,
                                                     Trends_obj,
                                                     save_obj,
-                                                    starttime,
-                                                    endtime,
+                                                    starttimes,
+                                                    endtimes,
                                                     testdata_name,
                                                     refdata_name,
                                                     plotit,
@@ -292,13 +404,15 @@ def calc_trends(out_dir, testdata_name, refdata_name, starttime, endtime, cells_
                                                  keep_cell_files=True)
     return
 
-
-def main():
-    out_dir = r'D:\users\wpreimes\datasets\CCITrends_output'
+def start_trends():
+    out_dir = r'D:\users\wpreimes\datasets\CCITrends_output\cci_adjusted'
     starttime = datetime(1988, 1, 1)
     endtime = datetime(2010, 12, 31)
 
-    refdata_names = ['CCI_41_COMBINED']
+    times =CCITimes('CCI_41_COMBINED').get_times()
+    timeframes = times['timeframes']
+    timeframes = np.insert(timeframes, -2, [['1988-01-01','2016-12-31']], axis=0)
+    refdata_names = ['merra2']
     testdata_names = ['CCI_41_COMBINED_ADJUSTED']
 
     for refdata_name in refdata_names:
@@ -306,12 +420,29 @@ def main():
             calc_trends(out_dir=out_dir,
                         testdata_name=testdata_name,
                         refdata_name=refdata_name,
-                        starttime=starttime,
-                        endtime=endtime,
-                        cells_identifier=[2282],
-                        plotit=True,
-                        parallel_processes=1)
+                        starttimes=timeframes[:,0],
+                        endtimes=timeframes[:,1],
+                        cells_identifier='Australia',
+                        plotit=False,
+                        parallel_processes=4)
+
+
 
 if __name__ == '__main__':
-    main()
+    trends_file = r"D:\users\wpreimes\datasets\CCITrends_output\cci_unadjusted\GLOBAL_CCI_41_COMBINED_Trends.nc"
+    homogtest_file = r"D:\users\wpreimes\datasets\HomogeneityTesting_data\AUS_tf_fit\GLOBAL_test_results_before_adjustment.nc"
+    trends_obj = PlotTrends(trends_file,
+                            homogtest_file,
+                            'CCI_41_COMBINED',
+                            'merra2',
+                            only_significant_trends=False,
+                            outlier_filter_trends=(1,99))
 
+
+    # start time for full trend: time = datetime(1988,1,1)
+    times =CCITimes('CCI_41_COMBINED').get_times(as_datetime=True)
+    starttimes = times['timeframes'][:,0]
+    #times = np.insert(times, -2, [datetime(1988,1,1)], axis=0)
+    for starttime in starttimes:
+        trends_obj.scatter_trends(starttime, r'D:\users\wpreimes\datasets\CCITrends_output\cci_unadjusted',
+                           regressionline=True, oneoneline=True, at='nobreaks', box_pos='tl', scale='linear')

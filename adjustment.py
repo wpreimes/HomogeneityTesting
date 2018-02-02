@@ -15,14 +15,21 @@ import matplotlib.pyplot as plt
 
 class LinearAdjustment(object):
     def __init__(self, data, breaktime,
-                 adjust_part='first', adjust_param='both', model_plots=False, maxplotiter=4):
+                 adjust_part='first', adjust_param='both', filter_parts=None,
+                 filter_quantiles=(0.05,0.95), model_plots=False, maxplotiter=4):
 
         self.data = data.copy()
         self.breaktime = breaktime
+
+        if filter_parts:
+            self.filter_parts = filter_parts
+            filter_mask, data_filtered = self.quantile_filtering(lower_quantile=filter_quantiles[0],
+                                                                 upper_quantile=filter_quantiles[1])
+            self.data['testdata'] = data_filtered.loc[:, 'testdata']
+
         self.adjust_part = adjust_part
         self.adjust_param = adjust_param
         self.maxplotliter = maxplotiter
-
         self.model_plots = self._load_model_plot(model_plots)
 
         self.residuals, self.B = self.regress_model() # create B
@@ -48,17 +55,69 @@ class LinearAdjustment(object):
                             'InterceptDiff': self.intercept_diff,
                             'Slope_before_break': self.B[0, 0],
                             'Intercept_before_break': self.B[1, 0],
-                            'MeanDiff_timeframes_testdata': self.mean_before - self.mean_after,
-                            'VarRatio_timeframes_testdata': self.var_before / self.var_after,
+                            'VarRatio_timeframes_testdata(before_over_after)': self.var_test_before / self.var_test_after,
+                            'VarRatio_timeframes_refdata(before_over_after)': self.var_ref_before / self.var_ref_after,
+                            'MeanDiff_timeframes_refdata(before_minus_after)': self.mean_ref_before - self.mean_ref_after,
+                            'MeanDiff_timeframes_testdata(before_minus_after)': self.mean_test_before - self.mean_test_after,
                             'Slope_after_break': self.B[0, 1],
                             'Intercept_after_break': self.B[1, 1],
                             'NormalizedResidualsSquareSum_before_break': self.norm_residuals_square_sums[0],
                             'NormalizedResidualsSquareSum_after_break': self.norm_residuals_square_sums[1],
                             'MaxResidual_before_break': self.max_abs_residuals[0],
-                            'MaxResidual_after_break': self.max_abs_residuals[1]}
+                            'MaxResidual_after_break': self.max_abs_residuals[1],
+                            'Corr_before_break': self.rval['corr_part0'],
+                            'Corr_after_break': self.rval['corr_part1'],
+                            'pcorr_before_break': self.pval['p_part0'],
+                            'pcorr_after_break': self.pval['p_part1']}
 
         return lin_model_params
 
+
+
+    @staticmethod
+    def filter_by_quantiles(df_in, lower=.1, upper=.9):
+        '''
+        Mask data outside of the definded quantile range
+        '''
+        df = df_in.copy()
+        upper_threshold = df.quantile(upper)
+        lower_threshold = df.quantile(lower)
+        df.loc[:, 'diff_flag'] = 1 #privious: np.nan
+        index_masked=df.query('Q < %f & Q > % f' % (upper_threshold, lower_threshold)).index
+        #index_masked = df[(df[colname] < upper_threshold) & (df[colname] > lower_threshold)].index
+        df.loc[index_masked, 'diff_flag'] = 0
+        return df['diff_flag']
+
+    def quantile_filtering(self, lower_quantile, upper_quantile):
+        '''
+        quantile filtering based of differences between refdata and testdata
+        '''
+        data = self.data.copy(True)
+        if self.filter_parts == 'both':
+            filter_mask = pd.concat([self.filter_by_quantiles(data.loc[:self.breaktime,'Q'].to_frame(),
+                                                             lower_quantile,
+                                                             upper_quantile),
+                                    self.filter_by_quantiles(data.loc[self.breaktime + pd.DateOffset(1):,'Q'].to_frame(),
+                                                             lower_quantile,
+                                                             upper_quantile)],
+                                    axis=0)
+        elif self.filter_parts == 'first':
+            filter_mask = pd.concat([self.filter_by_quantiles(data.loc[:self.breaktime,'Q'].to_frame(),
+                                                             lower_quantile,
+                                                             upper_quantile),
+                                    pd.Series(index = data.loc[self.breaktime + pd.DateOffset(1):].index, data=0).to_frame()],
+                                    axis=0)
+        elif self.filter_parts == 'last':
+            filter_mask = pd.concat([pd.Series(index = data.loc[:self.breaktime].index, data=0).to_frame(),
+                                     self.filter_by_quantiles(data.loc[self.breaktime + pd.DateOffset(1):,'Q'].to_frame(),
+                                                             lower_quantile,
+                                                             upper_quantile)],
+                                    axis=0)
+        elif not self.filter_parts:
+            filter_mask = pd.Series(index = data.index, data=0).to_frame()
+
+        data['diff_flag'] = filter_mask
+        return data['diff_flag'], data.loc[data['diff_flag'] == 0]
 
     def check_residuals(self):
         return
@@ -108,6 +167,8 @@ class LinearAdjustment(object):
         else:
             raise Exception("select 'first' or 'last' for part to adjust")
 
+
+
     def lms_model(self):
         #TODO: implement Lest Median Square adjustment for monthly values?
         pass
@@ -130,8 +191,8 @@ class LinearAdjustment(object):
         i2 = dataframe[self.breaktime+pd.DateOffset(1):]
 
         B_dict = {'b1':None, 'b2':None}
-        rval = []
-        pval = []
+        self.rval = {'corr_part0':np.nan, 'corr_part1': np.nan}
+        self.pval = {'p_part0':np.nan, 'p_part1': np.nan}
 
         norm_residuals_square_sums=[]
         max_abs_residuals=[]
@@ -139,30 +200,36 @@ class LinearAdjustment(object):
 
 
         for i,data in enumerate([i1, i2]):
+
             testdata = data['testdata']
             refdata = data['refdata']
 
             if i == 0:
-                self.mean_before = np.nanmean(testdata.values)
-                self.var_before = np.nanvar(testdata.values)
+                self.var_test_before = np.nanvar(testdata.values)
+                self.var_ref_before = np.nanvar(refdata.values)
+                self.mean_ref_before = np.nanmean(refdata.values)
+                self.mean_test_before = np.nanmean(testdata.values)
             else:
-                self.mean_after = np.nanmean(testdata.values)
-                self.var_after = np.nanvar(testdata.values)
+                self.var_test_after = np.nanvar(testdata.values)
+                self.var_ref_after = np.nanvar(refdata.values)
+                self.mean_test_after = np.nanmean(testdata.values)
+                self.mean_ref_after = np.nanmean(refdata.values)
 
             r, p = stats.pearsonr(refdata.values, testdata.values)
-            rval.append(r)
-            pval.append(p)
+            self.rval['corr_part%i' % i] = r
+            self.pval['p_part%i' % i] = p
 
-            if any(r < 0 for r in rval):
+            if r < 0:
                 raise Exception('2: negative corr %s (%s)' % ('before breaktime' if i==0  else 'after breaktime',
-                                                                     str(rval)))
-            if any(p > 0.1 for p in pval):  # todo: war 0.05
+                                                                     str(r)))
+            if p > 0.05:  # todo: was 0.05
                 raise Exception('3: positive corr %s not significant (%s)' % ('before breaktime' if i==0  else 'after breaktime',
-                                                                              str(pval)))
+                                                                              str(p)))
 
             #TODO: own function?
+            # ADJUSTMENT #
             n = len(testdata)
-            X = np.transpose(np.stack(( data['refdata'].values, np.ones(n)))) # np.ones(data['refdata'].values.size)
+            X = np.transpose(np.stack(( refdata.values, np.ones(n)))) # np.ones(data['refdata'].values.size)
             N = np.dot(np.transpose(X), X)
             try:
                 b = np.dot(np.dot(np.linalg.inv(N), np.transpose(X)), testdata.values)
@@ -215,7 +282,7 @@ class LinearAdjustment(object):
 
         self.B = np.matrix([[B_dict['b0'][0], B_dict['b1'][0]],         # Reform B to form [k1, k2,
                             [B_dict['b0'][1], B_dict['b1'][1]]])        #                   d1, d2]
-        self.corr = {'R': rval, 'p': pval}
+
         self.norm_residuals_square_sums = norm_residuals_square_sums
         self.max_abs_residuals = max_abs_residuals
         self.s02 = s02
@@ -254,6 +321,9 @@ class LinearAdjustment(object):
                 adjusted_part2 = part2 + meandiff
             else:
                 adjusted_part2 = cc * part2 + dd
+
+            adjustments_part2 = adjusted_part2 - part2
+            dataframe['adjustments'] = adjustments_part2
             dataframe['adjusted'] = pd.concat([part1, adjusted_part2])
 
         elif self.adjust_part == 'first':
@@ -263,17 +333,20 @@ class LinearAdjustment(object):
                 adjusted_part1 = part1 + meandiff
             else:
                 adjusted_part1 = cc * part1 + dd
+
+            adjustments_part1 = adjusted_part1 - part1
+            dataframe['adjustments'] = adjustments_part1
             dataframe['adjusted'] = pd.concat([adjusted_part1, part2])
         else:
             raise Exception("select 'first' or 'last' for part to adjust")
 
 
         if return_part == 'both':
-            return dataframe['adjusted']
+            return dataframe
         elif return_part == 'last':
-            return dataframe['adjusted'][self.breaktime+pd.DateOffset(1):]
+            return dataframe.loc[self.breaktime+pd.DateOffset(1):, :]
         elif return_part == 'first':
-            return dataframe['adjusted'][:self.breaktime]
+            return dataframe.loc[:self.breaktime, :]
         else:
             raise Exception("Select 'first' , 'last' or 'both' for part to return")
 

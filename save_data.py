@@ -14,10 +14,12 @@ import rsdata.root_path as root
 from smecv_grid.grid import SMECV_Grid_v042
 
 class LogFile(object):
-    def __init__(self, workfolder, initial_parameters=None):
+    def __init__(self, workfolder, logfile_name=None, initial_parameters=None):
         # type: (str, dict) -> None
         self.workfolder = workfolder
-        self.log_path = os.path.join(self.workfolder, 'log.txt')
+        if not logfile_name:
+            logfile_name = 'log.txt'
+        self.log_path = os.path.join(self.workfolder, logfile_name)
         if not os.path.isfile(self.log_path):
             with open(self.log_path, 'w') as f:
                 if initial_parameters:
@@ -29,8 +31,9 @@ class LogFile(object):
                     f.write('\n')
 
 
-    def add_line(self, string):
+    def add_line(self, string, level=0):
         # type: (str) -> None
+        string = '  ' * level + string
         with open(self.log_path, 'a') as f:
             f.write(string + '\n')
 
@@ -74,7 +77,7 @@ class RegularGriddedCellData(object):
         :param reference_time: datetime
             Reference for creating floats from datetimes
         :param resolution: tuple
-            Resolution of the regular grid
+            Resolution of the regular grid (lat,lon)
         '''
 
         self.cell_files_path = path
@@ -83,7 +86,7 @@ class RegularGriddedCellData(object):
 
         self.times = times
 
-        self.reference_date = datetime(1900,1,1,0,0)
+        self.reference_date = reference_time
 
         self.global_grid = grids.genreg_grid(*resolution).to_cell_grid(5)
         if not grid:

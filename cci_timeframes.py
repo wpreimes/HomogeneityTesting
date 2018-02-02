@@ -15,55 +15,7 @@ from otherfunctions import cci_extract, cci_string_combine
 
 # Order matters!!!!
 class CCITimes(object):
-    def __init__(self, product, ignore_position=True, skip_times=None):
-
-        timeframes = {'CCI_22_COMBINED': np.array(
-            [['2011-10-01', '2014-12-31'], ['2007-01-01', '2012-07-01'],
-             ['2002-07-01', '2011-10-01'], ['1998-01-01', '2007-01-01'],
-             ['1991-08-01', '2002-07-01'], ['1987-07-01', '1998-01-01']]),
-            'CCI_31_COMBINED': np.array(
-                [['2011-10-01', '2015-05-01'], ['2010-07-01', '2012-07-01'],
-                 ['2007-10-01', '2011-10-01'], ['2007-01-01', '2010-07-01'],
-                 ['2002-07-01', '2007-10-01'], ['1998-01-01', '2007-01-01'],
-                 ['1991-08-01', '2002-07-01'], ['1987-09-01', '1998-01-01']]),
-            'CCI_31_PASSIVE': np.array(
-                [['2012-07-01', '2015-12-31'], ['2011-10-01', '2015-05-01'],
-                 ['2010-07-01', '2012-07-01'], ['2007-10-01', '2011-10-01'],
-                 ['2002-07-01', '2010-07-01'], ['1998-01-01', '2007-10-01'],
-                 ['1987-09-01', '2002-07-01']]),
-            'CCI_31_ACTIVE': np.array(
-                [['2007-01-01', '2015-12-01'], ['2003-02-01', '2012-11-01'],
-                 ['1997-05-01', '2007-01-01'], ['1991-08-01', '2003-02-01']]),
-            'CCI_33_ACTIVE': np.array(
-                [['1991-07-01', '2016-12-31']]),
-            'CCI_33_COMBINED': np.array(
-                [['2011-10-05', '2016-12-31'], ['2010-01-15', '2012-07-01'],
-                 ['2007-10-01', '2011-10-05'], ['2007-01-01', '2010-01-15'],
-                 ['2002-06-19', '2007-10-01'],
-                 {'lat < -37 or lat > 37':
-                      [['1991-08-05', '2007-01-01'],
-                       ['1987-07-09', '2002-06-19']],
-                  'lat >= -37 and lat <= 37':
-                      [['1998-01-01', '2007-01-01'],
-                       ['1991-08-05', '2002-06-19'],
-                       ['1987-07-09', '1998-01-01']]
-                  },
-                 ['1978-10-26', '1991-08-05']]),
-            'CCI_33_PASSIVE': np.array(
-                [['2011-10-05', '2016-12-31'], ['2010-01-15', '2012-07-01'],
-                 ['2007-10-01', '2011-10-05'], ['2002-06-19', '2010-01-15'],
-                 {'lat < -37 or lat > 37':
-                      [['1987-07-09', '2007-10-01'],
-                       ['1978-10-26', '2002-06-19']],
-                  'lat >= -37 and lat <= 37':
-                      [['1998-01-01', '2007-10-01'],
-                       ['1987-07-09', '2002-06-19'],
-                       ['1978-10-26', '1998-01-01']]
-                  }]),
-        }
-        timeframes['CCI_41_COMBINED'] = timeframes['CCI_33_COMBINED']
-        timeframes['CCI_41_PASSIVE'] = timeframes['CCI_33_PASSIVE']
-        timeframes['CCI_41_ACTIVE'] = timeframes['CCI_33_ACTIVE']
+    def __init__(self, product, ignore_position=True, skip_breaktimes=None):
 
         breaktimes = {'CCI_22_COMBINED': np.array(
             ['2012-07-01', '2011-10-01', '2007-01-01', '2002-07-01', '1998-01-01',
@@ -102,27 +54,71 @@ class CCITimes(object):
                   'CCI_41_ACTIVE': np.array(['1991-08-05', '2016-12-31']),
                   'CCI_41_PASSIVE': np.array(['1978-10-26', '2016-12-31'])}
 
-        if product not in timeframes.keys() or product not in breaktimes.keys() or product not in ranges.keys():
+
+        if product not in breaktimes.keys() or product not in breaktimes.keys() or product not in ranges.keys():
             self.product = self._init_timeframes_for_adjusted(product)
         else:
             self.product = product
 
-        self.skip_times = skip_times
 
-        self.timeframes = timeframes[self.product]
         self.breaktimes = breaktimes[self.product]
-        self.ranges = ranges[self.product]
-
         if not self.gpi_dep_times():
             self.ignore_position = True
         else:
             self.ignore_position = ignore_position
 
-        if not self.ignore_position:
-            self.grid_points = SMECV_Grid_v042().get_grid_points()
+        self.ranges = ranges[self.product]
 
-        if self.skip_times and not self.ignore_position and self.gpi_dep_times():
+        self.skip_breaktimes = skip_breaktimes
+        if skip_breaktimes:
+            self.breaktimes = self.reduce_breaktimes()
+
+        if self.ignore_position:
+            self.breaktimes = self.max_breaktimes()
+            self.timeframes = self.timeframes_from_breaktimes(self.breaktimes)
+
+        if not self.ignore_position:
+            self.grid = SMECV_Grid_v042()
+
+        if self.skip_breaktimes and not self.ignore_position and self.gpi_dep_times():
             raise Exception('Skipping breaktimes for gpi dependent timeframes ambiguous')
+
+    def timeframes_from_breaktimes(self, breaktimes):
+        '''
+        Takes a triple of all break times and creates time frames for homogeneity testing
+        :return: np.array
+            The calculated timeframes [[start, end] , ...]
+        '''
+        times= [self.ranges[1]] + breaktimes.tolist() + [self.ranges[0]]
+        timeframes = []
+        for i in range(len(times)-2):
+            timeframe = times[i:i+3]
+            [endtime, breaktime, starttime] = timeframe[0:3]
+            timeframes.append([starttime, endtime])
+        return np.array(timeframes)
+
+    def reduce_breaktimes(self):
+        '''
+        Reduces cci version breaktimes to the breaktimes that are not in skip_breaktimes
+        :return: np.array
+            The reduced break times
+        '''
+        return [self.breaktimes[i] for i in range(len(self.breaktimes)) if i not in self.skip_breaktimes]
+
+    def filter_breaktimes(self, gpi):
+        (lon, lat) = self.grid.gpi2lonlat(gpi)
+        timeset = self.breaktimes
+        return_times = []
+        for i, time in enumerate(timeset):
+            if isinstance(time, dict):
+                for condition, value in time.iteritems():
+                    if eval(condition):
+                        for v in value:
+                            if v not in return_times:
+                                return_times.append(v)
+            else:
+                return_times.append(time)
+        return np.array(return_times)
 
     @staticmethod
     def as_string(datetimes):
@@ -141,16 +137,6 @@ class CCITimes(object):
         :return: np.array
         '''
         return [datetime.strptime(time, '%Y-%m-%d') for time in datestrings]
-
-    @staticmethod
-    def del_times(datestrings, skip_times):
-        '''
-        returns input without elements selected by index in skipt_times
-        :param datestrings: np.array
-        :param skip_times: list
-        :return: np.array
-        '''
-        return [datestrings[i] for i in range(len(datestrings)) if i not in skip_times]
 
     def _init_timeframes_for_adjusted(self, product):
         info = cci_extract(product)
@@ -171,26 +157,24 @@ class CCITimes(object):
         else:
             return False
 
-    def max_times(self):
+    def max_breaktimes(self):
         # Return the maximum of times (select the condition that contains most values)
-        return_data = {'breaktimes': {}, 'timeframes': {}, 'ranges': self.ranges}
-        for name, data in {'breaktimes': self.breaktimes, 'timeframes': self.timeframes}.iteritems():
-            union = []
-            for i, d in enumerate(data):
-                if isinstance(d, dict):
-                    longest_condition_name = None
-                    longest_condition_size = 0
-                    for condition, values in d.iteritems():
-                        if len(values) >= longest_condition_size:
-                            longest_condition_name = condition
-                            longest_condition_size = len(values)
-                    for value in d[longest_condition_name]:
-                        union.append(value)
-                else:
-                    union.append(d)
-            return_data[name] = union
 
-        return return_data
+        union = []
+        for i, d in enumerate(self.breaktimes):
+            if isinstance(d, dict):
+                longest_condition_name = None
+                longest_condition_size = 0
+                for condition, values in d.iteritems():
+                    if len(values) >= longest_condition_size:
+                        longest_condition_name = condition
+                        longest_condition_size = len(values)
+                for value in d[longest_condition_name]:
+                    union.append(value)
+            else:
+                union.append(d)
+
+        return np.array(union)
 
     def get_times(self, gpi=None, as_datetime=False):
         '''
@@ -201,33 +185,20 @@ class CCITimes(object):
         '''
         return_times = {'ranges': self.ranges}
 
-        if not self.gpi_dep_times:
+        if not self.gpi_dep_times():
             return_times['timeframes'] = self.timeframes
             return_times['breaktimes'] = self.breaktimes
         else:
-            if not gpi or self.ignore_position:
-                times = self.max_times()
-                return_times['breaktimes'] = times['breaktimes']
-                return_times['timeframes'] = times['timeframes']
+            if not gpi:
+                breaktimes = self.max_breaktimes()
+                timeframes = self.timeframes_from_breaktimes(breaktimes)
+                return_times['breaktimes'] = breaktimes
+                return_times['timeframes'] = timeframes
             else:
-                lat = self.grid_points[2][np.where(self.grid_points[0] == gpi)[0][0]]
-                lon = self.grid_points[1][np.where(self.grid_points[0] == gpi)[0][0]]
-
-                for name, timeset in {'timeframes': self.timeframes, 'breaktimes': self.breaktimes}.iteritems():
-                    return_times[name] = []
-                    for i, time in enumerate(timeset):
-                        if isinstance(time, dict):
-                            for condition, value in time.iteritems():
-                                if eval(condition):
-                                    for v in value:
-                                        if v not in return_times[name]:
-                                            return_times[name].append(v)
-                        else:
-                            return_times[name].append(time)
-
-        if self.skip_times:
-            return_times['timeframes'] = self.del_times(return_times['timeframes'], self.skip_times)
-            return_times['breaktimes'] = self.del_times(return_times['breaktimes'], self.skip_times)
+                breaktimes = self.filter_breaktimes(gpi)
+                timeframes = self.timeframes_from_breaktimes(breaktimes)
+                return_times['breaktimes'] = breaktimes
+                return_times['timeframes'] = timeframes
 
         if as_datetime:
             return_times['breaktimes'] = self.as_datetimes(return_times['breaktimes'])
@@ -290,29 +261,20 @@ class CCITimes(object):
 
 
 if __name__ == '__main__':
-    ds = CCITimes('CCI_41_COMBINED_ADJUSTED', ignore_position=True, skip_times=None)
-    for gpi in [620964, 805227]:  # First Point < 37 Lat, second > 37 Lat
-        times = ds.get_times(gpi, as_datetime=True)
-        print 'breaktimes:'
-        print times['breaktimes']
-        print 'timeframes:'
-        print times['timeframes']
-        print 'ranges:'
-        print times['ranges']
-        print (ds.timeframe_for_breaktime(gpi, times['breaktimes'][0]))
-        print (ds.breaktime_for_timeframe(gpi, times['timeframes'][0]))
-        #print (ds.get_adjacent(gpi, times['timeframes'][1], 2))
-        #print (ds.get_adjacent(gpi, times['breaktimes'][5], -2))
-    ds = CCITimes('CCI_41_COMBINED_ADJUSTED', ignore_position=True)
-    for gpi in [620964, 805227]:  # First Point < 37 Lat, second > 37 Lat
-        times = ds.get_times(gpi, as_datetime=False)
-        print 'breaktimes:'
-        print times['breaktimes']
-        print 'timeframes:'
-        print times['timeframes']
-        print 'ranges:'
-        print times['ranges']
-        print (ds.timeframe_for_breaktime(gpi, times['breaktimes'][0]))
-        print (ds.breaktime_for_timeframe(gpi, times['timeframes'][0]))
-        #print (ds.get_adjacent(gpi, times['timeframes'][1], 2))
-        #print (ds.get_adjacent(gpi, times['breaktimes'][5], -2))
+    for ignore_position in [True, False]:
+        for gpi in [605700, 216436]:
+            ds = CCITimes('CCI_41_COMBINED', ignore_position=True, skip_breaktimes=[1,4])
+            times = ds.get_times(gpi, as_datetime=True)
+            '''
+            print 'breaktimes:'
+            print times['breaktimes']
+            print 'timeframes:'
+            print times['timeframes']
+            print 'ranges:'
+            print times['ranges']
+            '''
+            print ds.get_adjacent(gpi, datetime(2002,6,19), 1)
+    #print (ds.timeframe_for_breaktime(gpi, times['breaktimes'][0]))
+    #print (ds.breaktime_for_timeframe(gpi, times['timeframes'][0]))
+    #print (ds.get_adjacent(gpi, times['timeframes'][1], 2))
+    #print (ds.get_adjacent(gpi, times['breaktimes'][5], -2))

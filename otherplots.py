@@ -15,6 +15,32 @@ from save_data import LogFile
 from smecv_grid.grid import SMECV_Grid_v042
 import xarray as xr
 from cci_timeframes import CCITimes
+from csv_writer import dict_csv_wrapper
+from matplotlib.offsetbox import AnchoredText
+
+
+
+def ts_adjustment_plot(data_in, breaktime, timeframe, products, lonlat, resample_m=True):
+    pass
+    fig, ax = plt.subplots()
+    data_in.plot(ax=ax, title='CCI SM Adjustment')
+
+    textbox = 'lat: %.2f, lon: %.2f%%\n' % (lonlat[1], lonlat[0]) +  \
+              'mean unadjusted before bt: %.2f%%\n' % data_stats['mean_before_break_original'] + \
+              'mean unadjusted after bt: %.2f%%\n' % data_stats['mean_after_break_original'] + \
+              'mean adjusted before bt: %.2f%%\n' % data_stats['mean_before_break_testdata'] + \
+              'mean adjusted after bt: %.2f%%\n' % data_stats['mean_after_break_testdata'] + \
+              'mean refdata before bt: %.2f%%\n' % data_stats['mean_before_break_refdata'] + \
+              'mean refdata after bt: %.2f%%\n' % data_stats['mean_after_break_refdata'] + \
+              'var unadjusted: %.2f%%\n' % var_unadjusted + \
+              'var adjusted: %.2f%%\n' % var_adjusted
+
+    plt.annotate(textbox, fontsize=15, xy=(0.025, 0.05), xycoords='axes fraction',
+                 bbox={'facecolor': 'grey', 'alpha': 0.5, 'pad': 3})
+    anchored_text = AnchoredText(info_text, loc=2)
+    ax.plot(x, y)
+    ax.add_artist(anchored_text)
+
 
 
 def combined_testresults_plot(workdir, file_before_adjustment, file_after_adjustment):
@@ -217,35 +243,49 @@ def inhomo_plot_with_stats(in_file, out_path, name_base=None):
 
 
 def compare_RTM_RTG(RTM_dir, RTG_dir, cci_prod, model_prod,
-                    filename_pattern='HomogeneityTestResult_%s_image.nc'):
+                    filename='GLOBAL_test_results_before_adjustment.nc'):
+
     times_obj = CCITimes(cci_prod)
     times = times_obj.get_times(as_datetime=False)
 
     cols = times['breaktimes'].size
     fig, axs = plt.subplots(1, cols, figsize=(cols * 3, 5), facecolor='w', edgecolor='k', sharey=False)
 
-    fig.suptitle('Comparison Break Detection RTM,RTG (USA)', fontsize=20, fontweight='bold')
+    fig.suptitle('Comparison Break Detection RTM,RTG', fontsize=20, fontweight='bold')
     fig.subplots_adjust(top=0.85, wspace=0.2, hspace=0.1)
     axs = axs.ravel()
     comp_meas = []
 
-    for i, breaktime in enumerate(times['breaktimes']):
-        filename = filename_pattern % breaktime
-        ncfile_rtm = xr.open_dataset(os.path.join(RTM_dir, filename))
-        ncfile_rtg = xr.open_dataset(os.path.join(RTG_dir, filename))
+    ncfile_rtm = xr.open_dataset(os.path.join(RTM_dir, filename))
+    ncfile_rtg = xr.open_dataset(os.path.join(RTG_dir, filename))
 
-        DF_Points_rtg_from_file = ncfile_rtg.to_dataframe().reset_index(inplace=False) \
-            .set_index(['location_id'])
+    compare_points = {}
+
+    for i, breaktime in enumerate(times['breaktimes']):
+        #filename = filename_pattern % breaktime
+        compare_points[breaktime] = {'RTM_found_break_RTG_not': [],
+                                     'RTG_found_break_RTM_not': []}
+
+        DF_Points_rtg_from_file = ncfile_rtg.sel(time=breaktime).to_dataframe()\
+            .reset_index(inplace=False).set_index(['gpi'])
+
+
+        #DF_Points_rtg_from_file = ncfile_rtg.to_dataframe().reset_index(inplace=False) \
+        #    .set_index(['gpi'])
 
         DF_Points_ismn = DF_Points_rtg_from_file.loc[DF_Points_rtg_from_file.index.dropna()] \
             .rename(columns={'test_results': 'RTG'})
         DF_Points_ismn = DF_Points_ismn[np.isfinite(DF_Points_ismn['RTG'])][['RTG', 'lon', 'lat']]
 
-        DF_Points_rtm_from_file = ncfile_rtm.to_dataframe().reset_index(inplace=False) \
-            .set_index(['location_id'])
+        DF_Points_rtm_from_file = ncfile_rtm.sel(time=breaktime).to_dataframe()\
+            .reset_index(inplace=False).set_index(['gpi'])
 
-        DF_Points_model = DF_Points_rtm_from_file.loc[DF_Points_rtm_from_file.index.dropna()] \
+        #DF_Points_rtm_from_file = ncfile_rtm.to_dataframe().reset_index(inplace=False) \
+        #    .set_index(['gpi'])[['test_results']]
+
+        DF_Points_model = DF_Points_rtm_from_file.reset_index().dropna().set_index('gpi')\
             .rename(columns={'test_results': 'RTM'})
+
         DF_Points_model = DF_Points_model[np.isfinite(DF_Points_model['RTM'])][['RTM']]
 
         DF_Points_merged = pd.concat([DF_Points_model, DF_Points_ismn], axis=1) \
@@ -261,8 +301,10 @@ def compare_RTM_RTG(RTM_dir, RTG_dir, cci_prod, model_prod,
                     DF_Points_merged = DF_Points_merged.set_value(gpi, 'diff', 0)
                 elif DF_Points_merged['RTM'].loc[gpi] != 4. and DF_Points_merged['RTG'].loc[gpi] == 4.:
                     DF_Points_merged = DF_Points_merged.set_value(gpi, 'diff', 1)
+                    compare_points[breaktime]['RTM_found_break_RTG_not'].append(gpi)
                 elif DF_Points_merged['RTM'].loc[gpi] == 4. and DF_Points_merged['RTG'].loc[gpi] != 4.:
                     DF_Points_merged = DF_Points_merged.set_value(gpi, 'diff', -1)
+                    compare_points[breaktime]['RTG_found_break_RTM_not'].append(gpi)
                 index += 1
 
             data = DF_Points_merged['diff'].values
@@ -282,6 +324,11 @@ def compare_RTM_RTG(RTM_dir, RTG_dir, cci_prod, model_prod,
 
     fig.savefig(os.path.join(RTG_dir, 'RTM_vs_RTG'))
     print('Number of points to compare:' + str(comp_meas))
+    for point_bt, data_dict in compare_points.iteritems():
+        ds = dict_csv_wrapper(data_dict)
+        ds.write(os.path.join(RTG_dir, '%s_RTM_vs_RT_conflicting_points.csv' % str(point_bt)))
+    return compare_points
+
 
 
 def show_processed_gpis(in_file, out_path, plottype, name_base=None):
@@ -497,6 +544,12 @@ def extreme_break(workdir, ref_prod, test_prod):
 if __name__ == '__main__':
     # df = pd_from_2Dnetcdf(r"H:\HomogeneityTesting_data\output\CCI33\HomogeneityTest_merra2_1991-08-01.nc", return_only_tested=False)
     # extreme_break(r'H:\HomogeneityTesting_data\output\CCI22EGU','gldas_v2','cci_22')
+    compare_RTM_RTG(r'D:\users\wpreimes\datasets\HomogeneityTesting_data\CCI41_global_modelsfromdaily_adjustment',
+                 r'D:\users\wpreimes\datasets\HomogeneityTesting_data\v37',
+                 'CCI_41_COMBINED',
+                 'merra2')
+
+    '''
     out_path = r'D:\users\wpreimes\datasets\HomogeneityTesting_data\v34'
     show_processed_gpis(os.path.join(out_path,'GLOBAL_lin_model_params_before_adjustment.nc'),out_path,
                         'adjustment_status', 'ADJUSTMENT_STATUS_before_adjustment')
@@ -512,7 +565,7 @@ if __name__ == '__main__':
                         'test_status', 'TEST_STATUS_after_adjustment')
     show_processed_gpis(os.path.join(out_path,'GLOBAL_test_results_before_adjustment.nc'),out_path,
                         'test_status', 'TEST_STATUS_before_adjustment')
-
+    '''
     # longest_homog_period_plots(r"D:\users\wpreimes\datasets\HomogeneityTesting_data\output\CCI41_ADJUST_global")
     #show_processed_gpis('/data-write/USERS/wpreimes/HomogeneityTesting_data/v1','test',"HomogeneityTestResult_2007-01-01_image.nc")
     #inhomo_plot_with_stats(r'D:\users\wpreimes\datasets\HomogeneityTesting_data\CCI41_global_modelsfromdaily_adjustment',

@@ -8,75 +8,186 @@ Created on Jun 27 15:33 2017
 
 import numpy as np
 import pandas as pd
-from rsroot import root_path
 import os
 import pytesmo.io.ismn.interface as ismn
-import pickle
-from otherfunctions import merge_ts, regress
 from smecv_grid.grid import SMECV_Grid_v042
-from grid_functions import cells_for_continent
 from rsdata import root_path
 from import_satellite_data import QDEGdata_D
+from csv_writer import dict_csv_wrapper
+from pytesmo.scaling import add_scaled
+from scipy import stats
 
 
-class ISMNdataUSA(object):
-    def __init__(self, scaleprod, max_depth=0.1,
-                 files_path = None):
+def wavg(dataframe, weights):
+    '''
+    Calculate the weighted average of a numpy array
+    :param dataframe: Dataframe
+        dataframe with multiple time series to merge
+    :param weights: np.array
+        weights for combining the columns of the dataframe, must be same size as number of columns
+    :return:
+    '''
+    df_averaged = pd.DataFrame(index=dataframe.index)
+    for index, line in dataframe.iterrows():
+        data = line.values
+        if any(np.isnan(data)):
+            data = np.ma.masked_invalid(data)
+            weights = np.ma.masked_array(weights, data.mask)
+        if (data.size == 0) or (weights.size == 0):
+            return np.nan
+
+        weighted_mean = np.average(data, weights=weights)
+        df_averaged.set_value(index, 'ismn_weighted_average', weighted_mean)
+
+    return df_averaged.iloc[:, 0]
+
+
+def fill_holes_lress(fill_series, other_series):
+    '''
+    Perform regression of column refdata on column testdata as used for combining
+    multiple insitu measurements
+    '''
+    # Find holes in max_series where there is data in other_series
+    fill_series = fill_series.copy(True)
+    other_series = other_series.copy(True)
+
+    df = pd.concat([fill_series, other_series], axis=1).rename(columns={fill_series.name: 'fill_series',
+                                                                        other_series.name: 'other_series'})
+
+    # Drop values where both sets are nan, no interpolation possible here
+    df = df.dropna(how='all')
+    # Group blocks where contiguous values are Nan in the series to fill
+
+    df.loc[:, 'nanmask'] = df['fill_series'].isnull().astype(bool)
+    df.loc[:, 'nanmask_shift'] = df['nanmask'].shift(1)
+    df.loc[:, 'nan_change'] = df['nanmask'] != df['nanmask_shift']
+    df.loc[:, 'nangroup'] = df['nan_change'].cumsum()
+
+    holes = df[['fill_series', 'other_series', 'nangroup', 'nanmask']].groupby(['nangroup', 'nanmask'])
+    # calculate regression coefficients for holes from other_series
+    for count, hole in holes:
+        if hole.nanmask.all():
+            slope, intercept, rvalue, pvalue, stderr = stats.linregress(range(len(hole.fill_series)),
+                                                                        hole.other_series)
+
+            df.ix[hole.index, 'fill_series'] = intercept + slope * hole.other_series
+
+    return df['fill_series']
+
+    # fill holes in max_series from regression coefficients found
+
+
+
+
+def merge_ts(dataframe_in):
+    '''
+    Merge temporally coinciding timeseries via interpolation from
+    bivariate linear regression.
+    Input: Dataframe of temporally coinciding timeseries.
+    -Find TS with most values. Use as reference to enhance.
+    -Enhance missing values in reference via linear regression from other TS.
+        Only use correlating (R>0.8) TS for interpolation.
+    -Return gap filled reference TS
+    '''
+    dataframe = dataframe_in.copy(True)
+    max_series_name = np.argmax(dataframe.notnull().sum().to_frame()[0])
+    quick_corr = dataframe.corr().sort_values(max_series_name, ascending=False).index.values[1:]
+    # Order other TSs via correlation to max_series and return list corr_ordered
+    # Improve max_series first with best fitting other,than second best fitting other,...
+    DF_other_series = pd.DataFrame()
+    weights = np.array([])
+    for other_series_name in dataframe[quick_corr]:
+        subframe = dataframe[[max_series_name, other_series_name]].copy(True)
+        corr, pval = stats.pearsonr(subframe.dropna()[max_series_name],
+                                    subframe.dropna()[other_series_name])
+        #print corr, pval
+        if corr >= 0.8 and pval < 0.01:
+            ismn_bias_corr = add_scaled(subframe.dropna(), 'linreg', label_in=other_series_name, label_scale=max_series_name)
+            DF_other_series[other_series_name] = ismn_bias_corr[other_series_name + '_scaled_linreg']
+            weights = np.append(weights, corr)
+
+    max_series = dataframe.loc[:,max_series_name]
+    #other_series_merged = DF_other_series.mean(axis=1)
+    if max_series.isnull().all():
+        return None
+    elif all(DF_other_series.isnull().all()):
+        # If there is no second TS, return the unchanged reference series
+        return max_series
+    else:
+        other_series_merged = wavg(DF_other_series, weights)
+        # Else perform interpolation from linear regression
+        merged_ts = fill_holes_lress(max_series, other_series_merged)
+        return merged_ts.rename('ismn_weighted_average')
+
+
+
+
+class ISMNdata(object):
+    def __init__(self, scaleprod=None, output_files_path=None, path=None, max_depth=0.1):
         # Create a list of gpis nearest to the stations of the dataset
         # If a gpi is nearest for multiple stations,
         # create a list of stations for these gpis that have to be merged
         # when importing data for the gpi
-        self.path_ismn_usa = os.path.join(root_path.u, 'datasets', 'ISMN', 'insituUSA',
+        if not path:
+            self.path_ismn_data = os.path.join(root_path.u, 'datasets', 'ISMN', 'insituUSA',
                                           'Data_seperate_files_19500101_20170321_2365493_xzeO_20170321')
+        else:
+            self.path_ismn_data = path
+        if scaleprod:
+            self.scaleprod = scaleprod
+            self.scaledata = QDEGdata_D(products=[scaleprod])
+        else:
+            self.scaleprod = False
+            self.scaledata = False
 
-        self.scaleprod = scaleprod
-        self.scaledata = QDEGdata_D(products=[scaleprod])
         self.max_depth = max_depth
-        self.ISMN_reader = ismn.ISMN_Interface(self.path_ismn_usa)
+        self.ISMN_reader = ismn.ISMN_Interface(self.path_ismn_data)
         self.networks = self.ISMN_reader.list_networks()
         self.grid = SMECV_Grid_v042()
-        self.gpis_with_netsta = self._init_assign_gpis_stations()
+        self.output_path = output_files_path
+        self.df_gpis = pd.DataFrame.from_dict(self.assign_netsta_to_gpis()).set_index('gpi')
 
 
-    def _init_assign_gpis_stations(self):
+
+    def assign_netsta_to_gpis(self):
         # For each station search the nearest gpi
-        cells_USA = cells_for_continent('United_States')
-        subgrid = self.grid.subgrid_from_cells(cells_USA)
-        gpis_with_netsta = {}
+        gpis_with_netsta = {'cell':[], 'gpi':[], 'network':[], 'station':[], 'dist':[],
+                            'station_lat':[], 'station_lon':[]}
         for i, network in enumerate(self.networks):
             print(network, '%i of %i' % (i, len(self.networks) - 1))
             stations = self.ISMN_reader.list_stations(network=network)
             for station in stations:
                 station_obj = self.ISMN_reader.get_station(stationname=station, network=network)
-                gpi, dist = subgrid.find_nearest_gpi(station_obj.longitude,
-                                                     station_obj.latitude)
+                lon = station_obj.longitude
+                lat = station_obj.latitude
+                gpi, dist = self.grid.find_nearest_gpi(lon,lat)
 
                 variables = station_obj.get_variables()
                 if 'soil moisture' in variables:
                     depths_from, depths_to = station_obj.get_depths('soil moisture')
-
                     # Check if any sensor measured in the correct depth
                     if any(np.around(depths_to, decimals=2) <= self.max_depth):
+                        gpis_with_netsta['gpi'].append(gpi)
+                        gpis_with_netsta['cell'].append(self.grid.gpi2cell(gpi))
+                        gpis_with_netsta['network'].append(network)
+                        gpis_with_netsta['station'].append(station)
+                        gpis_with_netsta['dist'].append(round(dist,3))
+                        gpis_with_netsta['station_lat'].append(round(lat,3))
+                        gpis_with_netsta['station_lon'].append(round(lon,3))
 
-                        #station_timeframe = station_obj.get_min_max_obs_timestamp()
-                        ## Check if station measured during the timeframe
+        writer = dict_csv_wrapper(gpis_with_netsta)
+        if self.output_path:
+            writer.write(os.path.join(self.output_path, 'gpis_netsta.csv'))
 
-                        #if (station_timeframe[0] < self.timeframe[1]) and \
-                        #        (station_timeframe[1] > self.timeframe[0]):
+        return writer.content
 
-                        if gpi in gpis_with_netsta.keys():
-                            gpis_with_netsta[gpi].append((network, station))
-                        else:
-                            gpis_with_netsta.update({gpi: [(network, station)]})
-        return gpis_with_netsta
-
-
-
-    def read_all_for_stations_near_gpi(self, gpi):
+    def read_all_for_stations_near_gpi(self, df_for_gpi):
         # Only bother with reading the station near the gpi if the gpi is in the objects list
         df_stations = pd.DataFrame()
         stations_dict = {}
-        for i, (network, station) in enumerate(self.gpis_with_netsta[gpi]):
+        for i, (network, station) in enumerate(zip(df_for_gpi['network'].values,
+                                                   df_for_gpi['station'].values)):
+
             stations_dict.update({station: {}})
             station_obj = self.ISMN_reader.get_station(stationname=station,
                                                        network=network)
@@ -109,7 +220,11 @@ class ISMNdataUSA(object):
 
 
     def get_scale_ts(self,gpi,starttime, endtime):
-        return self.scaledata.read_gpi(gpi, starttime, endtime)
+        if self.scaledata:
+            return self.scaledata.read_gpi(gpi, starttime, endtime) / 100
+        else:
+            return None
+
 
     def merge_stations_around_gpi(self, gpi, scale_ts):
         '''
@@ -119,7 +234,8 @@ class ISMNdataUSA(object):
         :param gpi:
         :return:
         '''
-        stations_dict, df_stations = self.read_all_for_stations_near_gpi(gpi)
+        df_for_gpi = self.df_gpis.loc[gpi]
+        stations_dict, df_stations = self.read_all_for_stations_near_gpi(df_for_gpi)
         # Include only meansurements +-6H around 0:00H
         # TODO: can measurements from different sensors but same depth be averaged?
         # TODO: can measurements from different depths be averaged?
@@ -141,53 +257,40 @@ class ISMNdataUSA(object):
                 df_sensor = df_sensor.resample('12H', base=18, label='right').mean()
                 df_sensor = df_sensor.at_time('06:00').shift(-6, freq='H')
 
-        if not scale_ts:
+        if not scale_ts and self.scaleprod:
             scale_ts = self.get_scale_ts(gpi,
                                          pd.to_datetime(df_sensor.index.values[0]).to_pydatetime(),
                                          pd.to_datetime(df_sensor.index.values[-1]).to_pydatetime())
 
-        df_merged = pd.DataFrame()
-        for column in df_sensor:
-            merged = pd.concat([df_sensor[[column]].rename(columns={column:'refdata'}),
-                                   scale_ts.rename(columns={self.scaleprod:'testdata'})],axis=1)
-            ismn_bias_corr, R, pval, ress = regress(merged.dropna())
-            df_merged[column] = ismn_bias_corr
+        if self.scaleprod:
+            print('Merge with scale product %s' %self.scaleprod)
+            #Fit all single ISMN Series to the common scale ts and calculate weighted mean from correlations
+            df_merged = pd.DataFrame()
+            df_weights = pd.DataFrame(index = ['weights'])
+            for column in df_sensor:
+                merged = pd.concat([df_sensor[[column]].rename(columns={column:'ismn'}),
+                                       scale_ts.rename(columns={self.scaleprod:'reference'})],axis=1)
 
-        return df_merged.mean(axis=1, skipna=False)
+                #ismn_bias_corr, R, pval, ress = regress(merged.dropna())
+                ismn_bias_corr = add_scaled(merged.dropna(), 'linreg', label_in='ismn', label_scale='reference')
+                df_merged[column] = ismn_bias_corr['ismn_scaled_linreg']
+                corr, p = stats.pearsonr(ismn_bias_corr['ismn_scaled_linreg'].values,
+                                         ismn_bias_corr['reference'].values)
+                corr = ismn_bias_corr.corr().loc['ismn_scaled_linreg','reference']
+                if corr >0.8 and p < 0.01: #TODO: Change to 0.8 and 0.01
+                    df_weights.set_value('weights', column, corr**2)
+                else:
+                    df_weights.set_value('weights', column, np.nan)
 
-        '''
-                df_depth['Depth%i' % d] = merge_ts(df_sensor)
-            if df_depth.empty:
-                continue
-            df_station[station_name] = merge_ts(df_depth)
-        if df_station.empty:
-            raise Exception('No valid insitu data around gpi')
-        return df_station
-        '''
-        '''
-        for station in df_station.columns.values:
-            df_merged = pd.concat([df_cci, df_station[station]], axis=1)
-            df_merged = df_merged.dropna()
-            df_merged = df_merged.rename(columns={station: 'refdata', df_merged.columns.values[0]: 'testdata'})
-            # bivariate linear correlation --> b,c to remove add/mult biases
-            df_merged[station], R, pval, ress = regress(df_merged)
-            df_station[station + '_bias_corr'] = df_merged[station]
+            df_averaged = wavg(df_merged, df_weights.loc['weights'].values)
 
-        df_station = df_station[df_station.columns[df_station.columns.to_series().str.contains('_bias_corr')]]
-        df_station['testdata'] = df_cci
-        weights = df_station.corr()['testdata'] ** 2
+            return df_averaged.rename('ismn_weighted_average')
+        else:
+            print('Merge wirh longst sensor series')
+            # Use the longest sensor TS as reference and fill its holes from other, correlating sensors
+            return merge_ts(df_sensor)
 
-        del weights['testdata']
-        del df_station['testdata']
-        # Normalization: Pos lin correlation betw CCI and each station-->weighting coeff
-        sumweights = weights.sum()
-        df_station['insitu'] = (df_station * weights).sum(axis=1, skipna=False) / sumweights
-        df_station['testdata'] = df_cci
 
-        df_station = df_station.resample('M').mean()
-        
-        return df_station['insitu'][self.timeframe[0]:self.timeframe[1]]
-        '''
 
     def read_gpi(self, gpi, startdate, enddate, scalets=None):
         data_group = pd.DataFrame(index=pd.date_range(startdate, enddate, freq='D'))
@@ -201,19 +304,23 @@ class ISMNdataUSA(object):
             pass
         ts_ismnmerge.index = ts_ismnmerge.index.to_datetime().date
         ts_ismnmerge.index = pd.to_datetime(ts_ismnmerge.index)
-        data_group['ISMN-Merge'] = ts_ismnmerge
+        data_group['ISMN-Merge'] = ts_ismnmerge * 100
 
         return data_group[startdate:enddate]
 
 if __name__ == '__main__':
     from datetime import datetime
-    gpi = 772117
-    testprod = 'CCI_41_COMBINED'
-    scaleprod = 'merra2'
+
+    ismn_data_path = os.path.join(root_path.u, 'datasets', 'ISMN', 'insituUSA',
+                 'Data_seperate_files_19500101_20170321_2365493_xzeO_20170321')
+
+    gpi = 700119
     timeframe = [datetime(1978, 10, 26), datetime(2016, 12, 31)]
-    scale_data = QDEGdata_D(products=[scaleprod])
-    data = ISMNdataUSA(scaleprod, 0.1)
-    data2 = QDEGdata_D(products=['merra2'])
-    df = data.read_gpi(gpi, timeframe[0], timeframe[1])
-    df2 = data2.read_gpi(gpi, timeframe[0], timeframe[1])
-    print pd.concat([df, df2],axis=1)
+    data = ISMNdata(None, r'C:\Temp\csv',ismn_data_path, max_depth=0.1)
+    data2 = ISMNdata('CCI_41_COMBINED', r'C:\Temp\csv',ismn_data_path, max_depth=0.1)
+    df = data.read_gpi(gpi, timeframe[0], timeframe[1]).rename(columns={'ISMN-Merge':'ISMN_scaleself'})
+    df2 = data2.read_gpi(gpi, timeframe[0], timeframe[1]).rename(columns={'ISMN-Merge':'ISMN_scalets'})
+    merged = pd.concat([df2, df], axis=1)
+    merged = add_scaled(merged.dropna(), 'linreg', label_in='ISMN_scalets', label_scale='ISMN_scaleself')
+
+

@@ -17,7 +17,7 @@ from scipy.stats import fligner, levene
 from cci_timeframes import CCITimes
 from otherfunctions import regress, datetime2matlabdn
 from import_satellite_data import QDEGdata_D
-from import_ismn_data import ISMNdataUSA
+from import_ismn_data import ISMNdata
 
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
@@ -43,7 +43,7 @@ class BreakTestData(object):
         self.range = CCITimes(self.test_prod, ignore_position=True).get_times(None, as_datetime=False)['ranges']
         self.anomaly = anomaly
         if self.ref_prod == 'ISMN-Merge':
-            self.ismndata = ISMNdataUSA('merra2', max_depth=0.1)
+            self.ismndata = ISMNdata(None, max_depth=0.1)
             self.data = QDEGdata_D(products=[self.test_prod])
         else:
             self.data = QDEGdata_D(products=[self.ref_prod, self.test_prod])
@@ -88,10 +88,8 @@ class BreakTestData(object):
             try:
                 if self.ref_prod == 'ISMN-Merge':
                     df_time = self.data.read_gpi(gpi, start, end)
-
-                    df_time = df_time / 100  # type: pd.DataFrame
-
                     df_time['ISMN-Merge'] = self.ismndata.read_gpi(gpi, start, end)
+                    df_time = df_time / 100  # type: pd.DataFrame
                 else:
                     df_time = self.data.read_gpi(gpi, start, end)
                     df_time = df_time / 100
@@ -102,8 +100,8 @@ class BreakTestData(object):
             except:
                 raise Exception('9: Could not import data for gpi %i' % gpi)
 
-        df_time = df_time.rename(columns={self.ref_prod: 'refdata',
-                                          self.test_prod: 'testdata'})
+        df_time = df_time.rename(columns={self.ref_prod: 'refdata_original',
+                                          self.test_prod: 'testdata_original'})
 
         # Drop days where either dataset is missing
         return df_time
@@ -158,6 +156,9 @@ class BreakTestData(object):
         if not threshold:
             return df.resample(how).mean()
         else:
+            if how != 'M':
+                raise NotImplementedError
+
             years, months = df.index.year, df.index.month
 
             if len(years)==0 or len(months)==0:
@@ -245,7 +246,7 @@ class BreakTestData(object):
 
             return pd.concat(concat, axis=1)
 
-    def ref_data_correction(self, df_time):
+    def ref_data_correction(self, df_time, refdata_col_name, ignore_exceptions=False):
         '''
         Scale the column "refdata" in the given dataframe to values of "testdata" in the dataframe
 
@@ -255,57 +256,14 @@ class BreakTestData(object):
             DataFrame with bias corrected reference data
         '''
         data = df_time.copy()
-        adjusted_data, rxy, pval, ress = regress(data)
+        adjusted_data, rxy, pval, ress = regress(data, refdata_col_name)
 
         data['bias_corr_refdata'] = adjusted_data
 
-        if any(np.isnan(ress)):
+        if not ignore_exceptions and any(np.isnan(ress)):
             raise Exception('5: Negative or NaN correlation after refdata correction')
 
         return data['bias_corr_refdata']
-
-    @staticmethod
-    def filter_by_quantiles(df_in, lower=.1, upper=.9):
-        '''
-        Mask data outside of the definded quantile range
-        '''
-        df = df_in.copy()
-        upper_threshold = df.quantile(upper)
-        lower_threshold = df.quantile(lower)
-        df.loc[:, 'diff_flag'] = 1 #privious: np.nan
-        index_masked=df.query('Q < %f & Q > % f' % (upper_threshold, lower_threshold)).index
-        #index_masked = df[(df[colname] < upper_threshold) & (df[colname] > lower_threshold)].index
-        df.loc[index_masked, 'diff_flag'] = 0
-        return df['diff_flag']
-
-    def quantile_filtering(self, data_in, breaktime, parts, lower_quantile, upper_quantile):
-        '''
-        quantile filtering based of differences between refdata and testdata
-        '''
-        data = data_in.copy()
-        if parts == 'both':
-            filter_mask = pd.concat([self.filter_by_quantiles(data.loc[:breaktime,'Q'].to_frame(),
-                                                             lower_quantile,
-                                                             upper_quantile),
-                                    self.filter_by_quantiles(data.loc[breaktime + pd.DateOffset(1):,'Q'].to_frame(),
-                                                             lower_quantile,
-                                                             upper_quantile)],
-                                    axis=0)
-        elif parts == 'first':
-            filter_mask = pd.concat([self.filter_by_quantiles(data.loc[:breaktime,'Q'].to_frame(),
-                                                             lower_quantile,
-                                                             upper_quantile),
-                                    pd.Series(index = data.loc[breaktime + pd.DateOffset(1):].index, data=0).to_frame()],
-                                    axis=0)
-        elif parts == 'last':
-            filter_mask = pd.concat([pd.Series(index = data.loc[:breaktime].index, data=0).to_frame(),
-                                     self.filter_by_quantiles(data.loc[breaktime + pd.DateOffset(1):,'Q'].to_frame(),
-                                                             lower_quantile,
-                                                             upper_quantile)],
-                                    axis=0)
-
-        data['diff_flag'] = filter_mask
-        return data['diff_flag'], data.loc[data['diff_flag'] == 0]
 
 
 class BreakTestBase(BreakTestData):
@@ -514,14 +472,14 @@ class BreakTestBase(BreakTestData):
             h = 0
         return h, stats_lv
 
-    def check_corr(self, df_time):
+    def check_corr(self, df_time, min_corr=0, min_p = 0.05):
         # Calculation of Spearman-Correlation coefficient
         corr, pval = stats.spearmanr(df_time['testdata'], df_time['refdata'], nan_policy='omit')
 
         # Check the rank correlation so that correlation is positive and significant
-        if not (corr > 0 and pval < 0.01):  # TODO: stricter thresholds?
+        if not (corr > min_corr and pval < min_p):  # TODO: stricter thresholds?
             raise Exception('3: Spearman correlation failed with correlation %f ' 
-                            '(must be >0) and pval %f (must be <0.01)' % (corr, pval))
+                            '(must be >0) and pval %f (must be <0.05)' % (corr, pval))
 
         return corr, pval
 

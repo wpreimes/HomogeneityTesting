@@ -406,12 +406,21 @@ if __name__ == '__main__':
     from grid_functions import cells_for_continent
     import matplotlib.pyplot as plt
     from smecv_grid.grid import SMECV_Grid_v042
-    for gpi in SMECV_Grid_v042().grid_points_for_cell([2351])[0]:
-        timeframe = [datetime(1980,10,26), datetime(2016,1,1)]
-        data = QDEGdata_D(products=['CCI_41_COMBINED','CCI_41_COMBINED_ADJUSTED'])
+    from cci_timeframes import CCITimes
+
+    timeframes = CCITimes('CCI_41_COMBINED').get_times()['timeframes']
+    breaktimes = CCITimes('CCI_41_COMBINED').get_times()['breaktimes']
+
+    for gpi in SMECV_Grid_v042().grid_points_for_cell([2173])[0]:
+        timeframe = [datetime(1991,1,1), datetime(2016,1,1)]
+        data = QDEGdata_D(products=['CCI_41_COMBINED','CCI_41_COMBINED_ADJUSTED','merra2'])
         ts = data.read_gpi(gpi, timeframe[0], timeframe[1])
+        for timeframe, breaktime in zip(timeframes,breaktimes):
+            for prod in ['CCI_41_COMBINED','CCI_41_COMBINED_ADJUSTED']:
+                ts.loc[breaktime:timeframe[1],'mean_%s'%prod] = np.nanmean(ts.loc[breaktime:timeframe[1],prod].values)
         ts['Q'] = ts['CCI_41_COMBINED']-ts['CCI_41_COMBINED_ADJUSTED']
-        ts[['CCI_41_COMBINED','CCI_41_COMBINED_ADJUSTED','Q']].plot()
+        ts.plot(title='Adjustment CCI SM, GPI: %i' %gpi)
         plt.show()
+        continue
 
 
